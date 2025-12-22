@@ -21,8 +21,8 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
-    "example": "tsx examples/usage.ts",
-    "test": "vitest"
+    "sample": "tsx examples/usage.ts",
+    "test": "vitest run"
   },
   "repository": {
     "type": "git",

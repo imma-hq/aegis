@@ -6,7 +6,7 @@ import {
   SenderKeyDistributionMessage,
   SenderKeyMessage,
 } from "./sender-keys";
-import { encryptMessage, decryptMessage } from "./session";
+
 import { bytesToBase64, base64ToBytes } from "./crypto";
 import { Aegis } from "./config";
 
@@ -20,6 +20,18 @@ interface GroupSessionData {
   };
 }
 
+function validateGroupId(groupId: string): void {
+  if (!groupId || typeof groupId !== "string" || groupId.trim() === "") {
+    throw new Error("Group ID must be a non-empty string");
+  }
+}
+
+function validateSenderKeyState(state: SenderKeyState): void {
+  if (!state || !state.chainKey || state.chainKey.length === 0) {
+    throw new Error("Invalid sender key state");
+  }
+}
+
 const GROUP_STORAGE_PREFIX = "aegis_group_";
 
 /**
@@ -31,6 +43,8 @@ export class GroupSession {
   private data: GroupSessionData;
 
   private constructor(groupId: string, data: GroupSessionData) {
+    validateGroupId(groupId);
+    validateSenderKeyState(data.mySenderKey);
     this.groupId = groupId;
     this.data = data;
   }
@@ -47,6 +61,10 @@ export class GroupSession {
    * This MUST be sent via the secure 1:1 session (encryptMessage).
    */
   createDistributionMessage(senderId: string): SenderKeyDistributionMessage {
+    if (!senderId || typeof senderId !== "string" || senderId.trim() === "") {
+      throw new Error("Sender ID must be a non-empty string");
+    }
+
     return {
       type: "distribution",
       senderId,
@@ -62,7 +80,7 @@ export class GroupSession {
    * Call this AFTER decrypting the 1:1 message containing this payload.
    */
   async processDistributionMessage(
-    payload: SenderKeyDistributionMessage
+    payload: SenderKeyDistributionMessage,
   ): Promise<void> {
     if (payload.groupId !== this.groupId) return;
 
@@ -81,13 +99,21 @@ export class GroupSession {
    */
   async encrypt(
     plaintext: string,
-    myUserId: string
+    myUserId: string,
   ): Promise<SenderKeyMessage> {
+    if (!plaintext || typeof plaintext !== "string") {
+      throw new Error("Plaintext must be a non-empty string");
+    }
+
+    if (!myUserId || typeof myUserId !== "string" || myUserId.trim() === "") {
+      throw new Error("User ID must be a non-empty string");
+    }
+
     const msg = encryptHashRatchet(
       this.data.mySenderKey,
       this.groupId,
       myUserId,
-      plaintext
+      plaintext,
     );
     // console.log(`DEBUG_ALICE_KEY: ${bytesToBase64(this.data.mySenderKey.chainKey)}`);
     await this.save(); // Save ratcheted state
@@ -99,10 +125,20 @@ export class GroupSession {
    * O(1) operation.
    */
   async decrypt(msg: SenderKeyMessage): Promise<string> {
+    if (
+      !msg ||
+      !msg.senderId ||
+      !msg.groupId ||
+      !msg.cipherText ||
+      !msg.nonce
+    ) {
+      throw new Error("Invalid message format");
+    }
+
     const participant = this.data.participants[msg.senderId];
     if (!participant) {
       throw new Error(
-        `No sender key found for ${msg.senderId}. Did you receive a distribution message?`
+        `No sender key found for ${msg.senderId}. Did you receive a distribution message?`,
       );
     }
 
@@ -110,7 +146,7 @@ export class GroupSession {
     // Trial decrypt (and ratchet)
     const { plaintext, nextChainKey } = decryptHashRatchet(
       currentChainKey,
-      msg
+      msg,
     );
 
     // Update state
@@ -121,16 +157,6 @@ export class GroupSession {
   }
 
   private async save(): Promise<void> {
-    // Manually serialize Uint8Arrays in `mySenderKey`
-    const toSave = {
-      ...this.data,
-      mySenderKey: {
-        ...this.data.mySenderKey,
-        chainKey: Array.from(this.data.mySenderKey.chainKey), // Serialize as array for storage
-        signatureKey: Array.from(this.data.mySenderKey.signatureKey),
-      },
-    };
-
     // NOTE: In a real app complexity, we need a better proper serializer for Uint8Array <-> JSON
     // because `JSON.stringify` on Uint8Array turns it into object {"0": 1, ...} or array.
     // Let's implement a quick fix here or assume the StorageAdapter handles objects.
@@ -147,7 +173,7 @@ export class GroupSession {
 
     await Aegis.getStorage().setItem(
       `${GROUP_STORAGE_PREFIX}${this.groupId}`,
-      JSON.stringify(storageFormat)
+      JSON.stringify(storageFormat),
     );
   }
 

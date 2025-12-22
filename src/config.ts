@@ -22,7 +22,7 @@ export const Aegis = {
   getStorage(): StorageAdapter {
     if (!config) {
       throw new Error(
-        "Aegis library not initialized. Call Aegis.init() with a storage adapter."
+        "Aegis library not initialized. Call Aegis.init() with a storage adapter.",
       );
     }
     return config.storage;

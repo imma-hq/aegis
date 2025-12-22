@@ -1,10 +1,5 @@
 /**
  * Core Cryptographic Utilities
- *
- * Implements cryptographic primitives using @noble libraries:
- * - Blake3 hashing for fingerprints and key derivation
- * - ChaCha20-Poly1305 for authenticated encryption
- * - Utilities for encoding and random generation
  */
 
 import { blake3 } from "@noble/hashes/blake3.js";
@@ -19,8 +14,16 @@ import { randomBytes } from "@noble/hashes/utils.js";
  */
 export function hash(
   data: Uint8Array | string,
-  outputLength: number = 32
+  outputLength: number = 32,
 ): Uint8Array {
+  if (!data) {
+    throw new Error("Input data cannot be empty");
+  }
+
+  if (outputLength <= 0 || outputLength > 64) {
+    throw new Error("Output length must be between 1 and 64 bytes");
+  }
+
   const input = typeof data === "string" ? stringToBytes(data) : data;
   return blake3(input, { dkLen: outputLength });
 }
@@ -34,7 +37,7 @@ export function hash(
 export function deriveKey(
   data: Uint8Array | string,
   context: string,
-  outputLength: number = 32
+  outputLength: number = 32,
 ): Uint8Array {
   const input = typeof data === "string" ? stringToBytes(data) : data;
   const contextBytes = stringToBytes(context);
@@ -67,7 +70,7 @@ export function encrypt(
   key: Uint8Array,
   nonce: Uint8Array,
   plaintext: Uint8Array,
-  associatedData?: Uint8Array
+  associatedData?: Uint8Array,
 ): Uint8Array {
   if (key.length !== 32) {
     throw new Error("Key must be 32 bytes");
@@ -93,7 +96,7 @@ export function decrypt(
   key: Uint8Array,
   nonce: Uint8Array,
   ciphertext: Uint8Array,
-  associatedData?: Uint8Array
+  associatedData?: Uint8Array,
 ): Uint8Array {
   if (key.length !== 32) {
     throw new Error("Key must be 32 bytes");

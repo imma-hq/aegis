@@ -66,8 +66,13 @@ export interface SenderKeyMessage {
  * Generate a new Sender Key State
  */
 export function generateSenderKey(): SenderKeyState {
+  const chainKey = generateKey();
+  if (chainKey.length !== 32) {
+    throw new Error("Generated chain key must be 32 bytes");
+  }
+
   return {
-    chainKey: generateKey(),
+    chainKey,
     signatureKey: new Uint8Array(0), // Placeholder, ideally actual Sig Pub Key
     generation: Math.floor(Date.now() / 1000), // Use timestamp as generation ID for simplicity
   };
@@ -97,8 +102,25 @@ export function encryptGroupMessage(
   state: SenderKeyState,
   groupId: string,
   senderId: string,
-  plaintext: string
+  plaintext: string,
 ): SenderKeyMessage {
+  // Validate inputs
+  if (!state || !state.chainKey || state.chainKey.length === 0) {
+    throw new Error("Invalid sender key state");
+  }
+
+  if (!groupId || typeof groupId !== "string" || groupId.trim() === "") {
+    throw new Error("Group ID must be a non-empty string");
+  }
+
+  if (!senderId || typeof senderId !== "string" || senderId.trim() === "") {
+    throw new Error("Sender ID must be a non-empty string");
+  }
+
+  if (!plaintext || typeof plaintext !== "string") {
+    throw new Error("Plaintext must be a non-empty string");
+  }
+
   // 1. Derive Message Key
   const messageKey = deriveMessageKey(state.chainKey);
 
@@ -135,8 +157,23 @@ export function encryptGroupMessage(
  */
 export function decryptGroupMessage(
   currentChainKey: Uint8Array,
-  message: SenderKeyMessage
+  message: SenderKeyMessage,
 ): { plaintext: string; nextChainKey: Uint8Array } {
+  // Validate inputs
+  if (!currentChainKey || currentChainKey.length === 0) {
+    throw new Error("Current chain key must be a non-empty Uint8Array");
+  }
+
+  if (
+    !message ||
+    !message.senderId ||
+    !message.groupId ||
+    !message.cipherText ||
+    !message.nonce
+  ) {
+    throw new Error("Invalid message format: missing required fields");
+  }
+
   // Try decrypting with current derived message key
   const messageKey = deriveMessageKey(currentChainKey);
   const nonce = base64ToBytes(message.nonce);

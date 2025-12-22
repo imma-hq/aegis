@@ -52,6 +52,56 @@ interface SessionInitData {
 const SESSION_KEY_PREFIX = "aegis_session_";
 
 /**
+ * Per-session lock map to serialize encrypt/decrypt and other session updates.
+ * We chain promises per-session so operations that read/update session state
+ * are executed sequentially to avoid race conditions.
+ */
+const sessionLocks: Map<string, Promise<unknown>> = new Map();
+
+/**
+ * Run given async function serialized with respect to operations on the given sessionId.
+ * It chains the provided function onto the tail promise for the session and ensures
+ * the map entry is cleaned up when no longer needed.
+ */
+async function withSessionLock<T>(
+  sessionId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const current = sessionLocks.get(sessionId) ?? Promise.resolve();
+  // Chain execution of fn onto the current tail (if a previous operation failed,
+  // still execute the new operation).
+  const next = current.then(
+    () => fn(),
+    () => fn(),
+  );
+  // Store a promise that resolves when next completes so subsequent ops will queue after it.
+  sessionLocks.set(
+    sessionId,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  try {
+    const result = await next;
+    return result;
+  } finally {
+    // If the stored tail still corresponds to our 'next', remove it to avoid memory growth.
+    const tail = sessionLocks.get(sessionId);
+    if (
+      tail &&
+      tail ===
+        next.then(
+          () => undefined,
+          () => undefined,
+        )
+    ) {
+      sessionLocks.delete(sessionId);
+    }
+  }
+}
+
+/**
  * Initialize a new session as the initiator (X3DH-like)
  * @param recipientBundle - The recipient's public key bundle (IK, SPK, OTPK)
  */
@@ -61,8 +111,30 @@ export async function initializeSession(
     identityKey: string;
     signedPreKey: { id: number; key: string; signature: string };
     oneTimePreKey?: { id: number; key: string };
-  }
+  },
 ): Promise<SessionInitData> {
+  // Validate inputs
+  if (!sessionId || typeof sessionId !== "string") {
+    throw new Error("Invalid session ID");
+  }
+
+  if (!recipientBundle) {
+    throw new Error("Recipient bundle is required");
+  }
+
+  if (
+    !recipientBundle.identityKey ||
+    typeof recipientBundle.identityKey !== "string"
+  ) {
+    throw new Error("Invalid identity key");
+  }
+
+  if (
+    !recipientBundle.signedPreKey ||
+    typeof recipientBundle.signedPreKey !== "object"
+  ) {
+    throw new Error("Invalid signed pre-key");
+  }
   const sharedSecrets: Uint8Array[] = [];
   const ciphertexts: any = {};
 
@@ -88,7 +160,7 @@ export async function initializeSession(
 
   // Combine secrets: KDF(S1 || S2 || S3)
   const combinedSecret = new Uint8Array(
-    sharedSecrets.reduce((acc, curr) => acc + curr.length, 0)
+    sharedSecrets.reduce((acc, curr) => acc + curr.length, 0),
   );
   let offset = 0;
   for (const secret of sharedSecrets) {
@@ -135,24 +207,24 @@ export async function acceptSession(
     identitySecret: Uint8Array;
     signedPreKeySecret: Uint8Array;
     oneTimePreKeySecret?: Uint8Array;
-  }
+  },
 ): Promise<void> {
   const sharedSecrets: Uint8Array[] = [];
 
   // 1. Decapsulate IK
   sharedSecrets.push(
-    decapsulate(base64ToBytes(ciphertexts.ik), keys.identitySecret)
+    decapsulate(base64ToBytes(ciphertexts.ik), keys.identitySecret),
   );
 
   // 2. Decapsulate SPK
   sharedSecrets.push(
-    decapsulate(base64ToBytes(ciphertexts.spk), keys.signedPreKeySecret)
+    decapsulate(base64ToBytes(ciphertexts.spk), keys.signedPreKeySecret),
   );
 
   // 3. Decapsulate OTPK (if present and we have the key)
   if (ciphertexts.otpk && keys.oneTimePreKeySecret) {
     sharedSecrets.push(
-      decapsulate(base64ToBytes(ciphertexts.otpk), keys.oneTimePreKeySecret)
+      decapsulate(base64ToBytes(ciphertexts.otpk), keys.oneTimePreKeySecret),
     );
   } else if (ciphertexts.otpk && !keys.oneTimePreKeySecret) {
     throw new Error("Missing One-Time PreKey to decrypt session");
@@ -160,7 +232,7 @@ export async function acceptSession(
 
   // Combine secrets
   const combinedSecret = new Uint8Array(
-    sharedSecrets.reduce((acc, curr) => acc + curr.length, 0)
+    sharedSecrets.reduce((acc, curr) => acc + curr.length, 0),
   );
   let offset = 0;
   for (const secret of sharedSecrets) {
@@ -194,100 +266,104 @@ export async function acceptSession(
  */
 export async function encryptMessage(
   sessionId: string,
-  plaintext: string
+  plaintext: string,
 ): Promise<EncryptedMessage> {
-  const state = await loadSessionState(sessionId);
-  if (!state) {
-    throw new Error(`Session not found: ${sessionId}`);
-  }
+  return withSessionLock(sessionId, async () => {
+    const state = await loadSessionState(sessionId);
+    if (!state) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
 
-  // Derive message key from chain key
-  const messageKey = deriveKey(
-    state.sendChainKey,
-    `message_${state.sendMessageNumber}`,
-    32
-  );
+    // Derive message key from chain key
+    const messageKey = deriveKey(
+      state.sendChainKey,
+      `message_${state.sendMessageNumber}`,
+      32,
+    );
 
-  // Ratchet the chain key for forward secrecy
-  state.sendChainKey = deriveKey(state.sendChainKey, "ratchet", 32);
+    // Ratchet the chain key for forward secrecy
+    state.sendChainKey = deriveKey(state.sendChainKey, "ratchet", 32);
 
-  // Encrypt message
-  const nonce = generateNonce();
-  const plaintextBytes = stringToBytes(plaintext);
-  const ciphertextBytes = encrypt(messageKey, nonce, plaintextBytes);
+    // Encrypt message
+    const nonce = generateNonce();
+    const plaintextBytes = stringToBytes(plaintext);
+    const ciphertextBytes = encrypt(messageKey, nonce, plaintextBytes);
 
-  const encryptedMsg: EncryptedMessage = {
-    sessionId,
-    ciphertext: bytesToBase64(ciphertextBytes),
-    nonce: bytesToBase64(nonce),
-    messageNumber: state.sendMessageNumber,
-    timestamp: Date.now(),
-  };
+    const encryptedMsg: EncryptedMessage = {
+      sessionId,
+      ciphertext: bytesToBase64(ciphertextBytes),
+      nonce: bytesToBase64(nonce),
+      messageNumber: state.sendMessageNumber,
+      timestamp: Date.now(),
+    };
 
-  // Update state
-  state.sendMessageNumber++;
-  state.lastUsed = Date.now();
-  await saveSessionState(sessionId, state);
+    // Update state
+    state.sendMessageNumber++;
+    state.lastUsed = Date.now();
+    await saveSessionState(sessionId, state);
 
-  return encryptedMsg;
+    return encryptedMsg;
+  });
 }
 
 /**
  * Decrypt a message from the session
  */
 export async function decryptMessage(
-  encryptedMsg: EncryptedMessage
+  encryptedMsg: EncryptedMessage,
 ): Promise<string> {
-  const state = await loadSessionState(encryptedMsg.sessionId);
-  if (!state) {
-    throw new Error(`Session not found: ${encryptedMsg.sessionId}`);
-  }
+  return withSessionLock(encryptedMsg.sessionId, async () => {
+    const state = await loadSessionState(encryptedMsg.sessionId);
+    if (!state) {
+      throw new Error(`Session not found: ${encryptedMsg.sessionId}`);
+    }
 
-  // Handle out-of-order messages
-  if (encryptedMsg.messageNumber < state.receiveMessageNumber) {
-    throw new Error("Message number too old - possible replay attack");
-  }
+    // Handle out-of-order messages
+    if (encryptedMsg.messageNumber < state.receiveMessageNumber) {
+      throw new Error("Message number too old - possible replay attack");
+    }
 
-  // Derive message key from chain key
-  let chainKey = state.receiveChainKey;
+    // Derive message key from chain key
+    let chainKey = state.receiveChainKey;
 
-  // Ratchet chain key to the correct message number
-  for (
-    let i = state.receiveMessageNumber;
-    i < encryptedMsg.messageNumber;
-    i++
-  ) {
+    // Ratchet chain key to the correct message number
+    for (
+      let i = state.receiveMessageNumber;
+      i < encryptedMsg.messageNumber;
+      i++
+    ) {
+      chainKey = deriveKey(chainKey, "ratchet", 32);
+    }
+
+    const messageKey = deriveKey(
+      chainKey,
+      `message_${encryptedMsg.messageNumber}`,
+      32,
+    );
+
+    // Ratchet one more time for next message
     chainKey = deriveKey(chainKey, "ratchet", 32);
-  }
 
-  const messageKey = deriveKey(
-    chainKey,
-    `message_${encryptedMsg.messageNumber}`,
-    32
-  );
+    // Decrypt message
+    const ciphertext = base64ToBytes(encryptedMsg.ciphertext);
+    const nonce = base64ToBytes(encryptedMsg.nonce);
 
-  // Ratchet one more time for next message
-  chainKey = deriveKey(chainKey, "ratchet", 32);
+    try {
+      const plaintextBytes = decrypt(messageKey, nonce, ciphertext);
+      const plaintext = bytesToString(plaintextBytes);
 
-  // Decrypt message
-  const ciphertext = base64ToBytes(encryptedMsg.ciphertext);
-  const nonce = base64ToBytes(encryptedMsg.nonce);
+      // Update state
+      state.receiveChainKey = chainKey;
+      state.receiveMessageNumber = encryptedMsg.messageNumber + 1;
+      state.lastUsed = Date.now();
+      await saveSessionState(encryptedMsg.sessionId, state);
 
-  try {
-    const plaintextBytes = decrypt(messageKey, nonce, ciphertext);
-    const plaintext = bytesToString(plaintextBytes);
-
-    // Update state
-    state.receiveChainKey = chainKey;
-    state.receiveMessageNumber = encryptedMsg.messageNumber + 1;
-    state.lastUsed = Date.now();
-    await saveSessionState(encryptedMsg.sessionId, state);
-
-    return plaintext;
-  } catch (error) {
-    console.error("[Session] Decryption failed:", error);
-    throw new Error("Message decryption failed - authentication error");
-  }
+      return plaintext;
+    } catch (error) {
+      console.error("[Session] Decryption failed:", error);
+      throw new Error("Message decryption failed - authentication error");
+    }
+  });
 }
 
 /**
@@ -295,7 +371,7 @@ export async function decryptMessage(
  */
 async function saveSessionState(
   sessionId: string,
-  state: SessionState
+  state: SessionState,
 ): Promise<void> {
   const serialized = JSON.stringify({
     sessionId: state.sessionId,
@@ -310,7 +386,7 @@ async function saveSessionState(
 
   await Aegis.getStorage().setItem(
     `${SESSION_KEY_PREFIX}${sessionId}`,
-    serialized
+    serialized,
   );
 }
 
@@ -318,10 +394,10 @@ async function saveSessionState(
  * Load session state from secure storage
  */
 async function loadSessionState(
-  sessionId: string
+  sessionId: string,
 ): Promise<SessionState | null> {
   const serialized = await Aegis.getStorage().getItem(
-    `${SESSION_KEY_PREFIX}${sessionId}`
+    `${SESSION_KEY_PREFIX}${sessionId}`,
   );
   if (!serialized) {
     return null;

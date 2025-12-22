@@ -4,12 +4,19 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
 
 // src/pqc.ts
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
+import { ed25519 } from "@noble/curves/ed25519.js";
 
 // src/crypto.ts
 import { blake3 } from "@noble/hashes/blake3.js";
 import { chacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { randomBytes } from "@noble/hashes/utils.js";
 function hash(data, outputLength = 32) {
+  if (!data) {
+    throw new Error("Input data cannot be empty");
+  }
+  if (outputLength <= 0 || outputLength > 64) {
+    throw new Error("Output length must be between 1 and 64 bytes");
+  }
   const input = typeof data === "string" ? stringToBytes(data) : data;
   return blake3(input, { dkLen: outputLength });
 }
@@ -172,17 +179,27 @@ function generateKEMKeyPair() {
     secretKey: keyPair.secretKey
   };
 }
-function generateSignatureKeyPair() {
-  const keyPair = ml_kem768.keygen();
+async function generateSignatureKeyPair() {
+  const secretKey = ed25519.utils.randomSecretKey();
+  const publicKey = await ed25519.getPublicKey(secretKey);
   return {
-    publicKey: keyPair.publicKey,
-    secretKey: keyPair.secretKey
+    publicKey,
+    secretKey
   };
 }
 async function createIdentity(userId, authMethod, identifier) {
+  if (!userId || typeof userId !== "string") {
+    throw new Error("User ID must be a non-empty string");
+  }
+  if (!authMethod || authMethod !== "phone" && authMethod !== "email") {
+    throw new Error("Auth method must be either 'phone' or 'email'");
+  }
+  if (!identifier || typeof identifier !== "string") {
+    throw new Error("Identifier must be a non-empty string");
+  }
   const kem = generateKEMKeyPair();
-  const sig = generateSignatureKeyPair();
-  const signedPreKey = generateSignedPreKey(kem, sig);
+  const sig = await generateSignatureKeyPair();
+  const signedPreKey = await generateSignedPreKey(sig.secretKey);
   const oneTimePreKeys = generateOneTimePreKeys(50);
   const identity = {
     kem,
@@ -199,9 +216,14 @@ async function createIdentity(userId, authMethod, identifier) {
   console.log("[PQC Identity] Created new identity for user:", userId);
   return identity;
 }
-function generateSignedPreKey(identityKem, identitySig) {
+async function generateSignedPreKey(signingSecretKey) {
   const keyPair = generateKEMKeyPair();
-  const signature = hash(keyPair.publicKey);
+  let signature;
+  if (signingSecretKey && signingSecretKey.length > 0) {
+    signature = await ed25519.sign(keyPair.publicKey, signingSecretKey);
+  } else {
+    signature = hash(keyPair.publicKey);
+  }
   return {
     id: Math.floor(Date.now() / 1e3),
     // Simple ID scheme
@@ -221,6 +243,12 @@ function generateOneTimePreKeys(count) {
   return keys;
 }
 async function saveIdentity(identity) {
+  if (!identity) {
+    throw new Error("Identity cannot be null or undefined");
+  }
+  if (!identity.userId || !identity.authMethod || !identity.identifier) {
+    throw new Error("Identity is missing required fields");
+  }
   const extendedIdentity = identity;
   const serialized = JSON.stringify({
     kem: {
@@ -260,6 +288,15 @@ async function loadIdentity() {
   }
   try {
     const data = JSON.parse(serialized);
+    if (!data.userId || !data.authMethod || !data.identifier || !data.version) {
+      throw new Error("Invalid identity data: missing required fields");
+    }
+    if (!data.kem || !data.kem.publicKey || !data.kem.secretKey) {
+      throw new Error("Invalid identity data: missing KEM keys");
+    }
+    if (!data.sig || !data.sig.publicKey || !data.sig.secretKey) {
+      throw new Error("Invalid identity data: missing signature keys");
+    }
     const identity = {
       kem: {
         publicKey: base64ToBytes(data.kem.publicKey),
@@ -302,7 +339,10 @@ async function deleteIdentity() {
   await Aegis.getStorage().removeItem(IDENTITY_STORAGE_KEY);
   console.log("[PQC Identity] Deleted identity");
 }
-async function exportIdentity(_password) {
+async function exportIdentity(password) {
+  if (!password || typeof password !== "string") {
+    throw new Error("Password must be a non-empty string");
+  }
   const identity = await loadIdentity();
   if (!identity) {
     throw new Error("No identity to export");
@@ -322,26 +362,63 @@ async function exportIdentity(_password) {
     createdAt: identity.createdAt,
     version: identity.version
   });
-  return bytesToBase64(new TextEncoder().encode(serialized));
+  const salt = generateNonce();
+  const key = deriveKey(
+    new Uint8Array([...new TextEncoder().encode(password), ...salt]),
+    "aegis_identity_backup_v1",
+    32
+  );
+  const nonce = generateNonce();
+  const ciphertext = encrypt(key, nonce, new TextEncoder().encode(serialized));
+  const backup = JSON.stringify({
+    v: "1",
+    salt: bytesToBase64(salt),
+    nonce: bytesToBase64(nonce),
+    ciphertext: bytesToBase64(ciphertext)
+  });
+  return bytesToBase64(new TextEncoder().encode(backup));
 }
-async function importIdentity(backupData, _password) {
+async function importIdentity(backupData, password) {
+  if (!backupData || typeof backupData !== "string") {
+    throw new Error("Backup data must be a non-empty string");
+  }
+  if (!password || typeof password !== "string") {
+    throw new Error("Password must be a non-empty string");
+  }
   try {
     const decoded = new TextDecoder().decode(base64ToBytes(backupData));
     const data = JSON.parse(decoded);
+    let parsed = data;
+    if (data && data.v === "1" && data.salt && data.nonce && data.ciphertext) {
+      const salt = base64ToBytes(data.salt);
+      const nonce = base64ToBytes(data.nonce);
+      const ciphertext = base64ToBytes(data.ciphertext);
+      const key = deriveKey(
+        new Uint8Array([...new TextEncoder().encode(password), ...salt]),
+        "aegis_identity_backup_v1",
+        32
+      );
+      const plaintextBytes = decrypt(key, nonce, ciphertext);
+      const plaintext = new TextDecoder().decode(plaintextBytes);
+      parsed = JSON.parse(plaintext);
+    }
+    if (!parsed.kem || !parsed.sig) {
+      throw new Error("Invalid identity backup format");
+    }
     const identity = {
       kem: {
-        publicKey: base64ToBytes(data.kem.publicKey),
-        secretKey: base64ToBytes(data.kem.secretKey)
+        publicKey: base64ToBytes(parsed.kem.publicKey),
+        secretKey: base64ToBytes(parsed.kem.secretKey)
       },
       sig: {
-        publicKey: base64ToBytes(data.sig.publicKey),
-        secretKey: base64ToBytes(data.sig.secretKey)
+        publicKey: base64ToBytes(parsed.sig.publicKey),
+        secretKey: base64ToBytes(parsed.sig.secretKey)
       },
-      userId: data.userId,
-      authMethod: data.authMethod,
-      identifier: data.identifier,
-      createdAt: data.createdAt,
-      version: data.version
+      userId: parsed.userId,
+      authMethod: parsed.authMethod,
+      identifier: parsed.identifier,
+      createdAt: parsed.createdAt,
+      version: parsed.version
     };
     await saveIdentity(identity);
     console.log("[PQC Identity] Imported identity for user:", identity.userId);
@@ -352,6 +429,9 @@ async function importIdentity(backupData, _password) {
   }
 }
 function calculateSafetyNumber(identity1KemPublic, identity1SigPublic, identity2KemPublic, identity2SigPublic) {
+  if (!identity1KemPublic || identity1KemPublic.length === 0 || !identity1SigPublic || identity1SigPublic.length === 0 || !identity2KemPublic || identity2KemPublic.length === 0 || !identity2SigPublic || identity2SigPublic.length === 0) {
+    throw new Error("All public keys must be non-empty Uint8Arrays");
+  }
   const combined = new Uint8Array(
     identity1KemPublic.length + identity1SigPublic.length + identity2KemPublic.length + identity2SigPublic.length
   );
@@ -385,6 +465,29 @@ async function getPublicKeyBundle() {
   const otpk = identity.oneTimePreKeys.length > 0 ? identity.oneTimePreKeys[0] : void 0;
   return {
     identityKey: bytesToBase64(identity.kem.publicKey),
+    sigPublicKey: bytesToBase64(identity.sig.publicKey),
+    signedPreKey: {
+      id: identity.signedPreKey.id,
+      key: bytesToBase64(identity.signedPreKey.keyPair.publicKey),
+      signature: bytesToBase64(identity.signedPreKey.signature)
+    },
+    oneTimePreKey: otpk ? {
+      id: otpk.id,
+      key: bytesToBase64(otpk.keyPair.publicKey)
+    } : void 0,
+    userId: identity.userId
+  };
+}
+async function getAndConsumePublicKeyBundle() {
+  const identity = await loadIdentity();
+  if (!identity) {
+    throw new Error("No identity found");
+  }
+  const otpk = identity.oneTimePreKeys.length > 0 ? identity.oneTimePreKeys.shift() : void 0;
+  await saveIdentity(identity);
+  return {
+    identityKey: bytesToBase64(identity.kem.publicKey),
+    sigPublicKey: bytesToBase64(identity.sig.publicKey),
     signedPreKey: {
       id: identity.signedPreKey.id,
       key: bytesToBase64(identity.signedPreKey.keyPair.publicKey),
@@ -398,19 +501,74 @@ async function getPublicKeyBundle() {
   };
 }
 function encapsulate(recipientKemPublicKey) {
+  if (!recipientKemPublicKey || recipientKemPublicKey.length === 0) {
+    throw new Error("Recipient public key must be a non-empty Uint8Array");
+  }
   const result = ml_kem768.encapsulate(recipientKemPublicKey);
   return {
     sharedSecret: result.sharedSecret,
     ciphertext: result.cipherText
   };
 }
+async function verifySignedPreKey(spkPublicKey, signature, signerPublicKey) {
+  try {
+    return await ed25519.verify(signature, spkPublicKey, signerPublicKey);
+  } catch {
+    return false;
+  }
+}
 function decapsulate(ciphertext, secretKey) {
+  if (!ciphertext || ciphertext.length === 0) {
+    throw new Error("Ciphertext must be a non-empty Uint8Array");
+  }
+  if (!secretKey || secretKey.length === 0) {
+    throw new Error("Secret key must be a non-empty Uint8Array");
+  }
   return ml_kem768.decapsulate(ciphertext, secretKey);
 }
 
 // src/session.ts
 var SESSION_KEY_PREFIX = "aegis_session_";
+var sessionLocks = /* @__PURE__ */ new Map();
+async function withSessionLock(sessionId, fn) {
+  const current = sessionLocks.get(sessionId) ?? Promise.resolve();
+  const next = current.then(
+    () => fn(),
+    () => fn()
+  );
+  sessionLocks.set(
+    sessionId,
+    next.then(
+      () => void 0,
+      () => void 0
+    )
+  );
+  try {
+    const result = await next;
+    return result;
+  } finally {
+    const tail = sessionLocks.get(sessionId);
+    if (tail && tail === next.then(
+      () => void 0,
+      () => void 0
+    )) {
+      sessionLocks.delete(sessionId);
+    }
+  }
+}
 async function initializeSession(sessionId, recipientBundle) {
+  if (!sessionId || typeof sessionId !== "string") {
+    throw new Error("Invalid session ID");
+  }
+  if (!recipientBundle) {
+    throw new Error("Recipient bundle is required");
+  }
+  if (!recipientBundle.identityKey || typeof recipientBundle.identityKey !== "string") {
+    throw new Error("Invalid identity key");
+  }
+  if (!recipientBundle.signedPreKey || typeof recipientBundle.signedPreKey !== "object") {
+    throw new Error("Invalid signed pre-key");
+  }
   const sharedSecrets = [];
   const ciphertexts = {};
   const ikBytes = base64ToBytes(recipientBundle.identityKey);
@@ -497,63 +655,67 @@ async function acceptSession(sessionId, ciphertexts, keys) {
   console.log("[Session] Accepted X3DH session:", sessionId);
 }
 async function encryptMessage(sessionId, plaintext) {
-  const state = await loadSessionState(sessionId);
-  if (!state) {
-    throw new Error(`Session not found: ${sessionId}`);
-  }
-  const messageKey = deriveKey(
-    state.sendChainKey,
-    `message_${state.sendMessageNumber}`,
-    32
-  );
-  state.sendChainKey = deriveKey(state.sendChainKey, "ratchet", 32);
-  const nonce = generateNonce();
-  const plaintextBytes = stringToBytes(plaintext);
-  const ciphertextBytes = encrypt(messageKey, nonce, plaintextBytes);
-  const encryptedMsg = {
-    sessionId,
-    ciphertext: bytesToBase64(ciphertextBytes),
-    nonce: bytesToBase64(nonce),
-    messageNumber: state.sendMessageNumber,
-    timestamp: Date.now()
-  };
-  state.sendMessageNumber++;
-  state.lastUsed = Date.now();
-  await saveSessionState(sessionId, state);
-  return encryptedMsg;
+  return withSessionLock(sessionId, async () => {
+    const state = await loadSessionState(sessionId);
+    if (!state) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+    const messageKey = deriveKey(
+      state.sendChainKey,
+      `message_${state.sendMessageNumber}`,
+      32
+    );
+    state.sendChainKey = deriveKey(state.sendChainKey, "ratchet", 32);
+    const nonce = generateNonce();
+    const plaintextBytes = stringToBytes(plaintext);
+    const ciphertextBytes = encrypt(messageKey, nonce, plaintextBytes);
+    const encryptedMsg = {
+      sessionId,
+      ciphertext: bytesToBase64(ciphertextBytes),
+      nonce: bytesToBase64(nonce),
+      messageNumber: state.sendMessageNumber,
+      timestamp: Date.now()
+    };
+    state.sendMessageNumber++;
+    state.lastUsed = Date.now();
+    await saveSessionState(sessionId, state);
+    return encryptedMsg;
+  });
 }
 async function decryptMessage(encryptedMsg) {
-  const state = await loadSessionState(encryptedMsg.sessionId);
-  if (!state) {
-    throw new Error(`Session not found: ${encryptedMsg.sessionId}`);
-  }
-  if (encryptedMsg.messageNumber < state.receiveMessageNumber) {
-    throw new Error("Message number too old - possible replay attack");
-  }
-  let chainKey = state.receiveChainKey;
-  for (let i = state.receiveMessageNumber; i < encryptedMsg.messageNumber; i++) {
+  return withSessionLock(encryptedMsg.sessionId, async () => {
+    const state = await loadSessionState(encryptedMsg.sessionId);
+    if (!state) {
+      throw new Error(`Session not found: ${encryptedMsg.sessionId}`);
+    }
+    if (encryptedMsg.messageNumber < state.receiveMessageNumber) {
+      throw new Error("Message number too old - possible replay attack");
+    }
+    let chainKey = state.receiveChainKey;
+    for (let i = state.receiveMessageNumber; i < encryptedMsg.messageNumber; i++) {
+      chainKey = deriveKey(chainKey, "ratchet", 32);
+    }
+    const messageKey = deriveKey(
+      chainKey,
+      `message_${encryptedMsg.messageNumber}`,
+      32
+    );
     chainKey = deriveKey(chainKey, "ratchet", 32);
-  }
-  const messageKey = deriveKey(
-    chainKey,
-    `message_${encryptedMsg.messageNumber}`,
-    32
-  );
-  chainKey = deriveKey(chainKey, "ratchet", 32);
-  const ciphertext = base64ToBytes(encryptedMsg.ciphertext);
-  const nonce = base64ToBytes(encryptedMsg.nonce);
-  try {
-    const plaintextBytes = decrypt(messageKey, nonce, ciphertext);
-    const plaintext = bytesToString(plaintextBytes);
-    state.receiveChainKey = chainKey;
-    state.receiveMessageNumber = encryptedMsg.messageNumber + 1;
-    state.lastUsed = Date.now();
-    await saveSessionState(encryptedMsg.sessionId, state);
-    return plaintext;
-  } catch (error) {
-    console.error("[Session] Decryption failed:", error);
-    throw new Error("Message decryption failed - authentication error");
-  }
+    const ciphertext = base64ToBytes(encryptedMsg.ciphertext);
+    const nonce = base64ToBytes(encryptedMsg.nonce);
+    try {
+      const plaintextBytes = decrypt(messageKey, nonce, ciphertext);
+      const plaintext = bytesToString(plaintextBytes);
+      state.receiveChainKey = chainKey;
+      state.receiveMessageNumber = encryptedMsg.messageNumber + 1;
+      state.lastUsed = Date.now();
+      await saveSessionState(encryptedMsg.sessionId, state);
+      return plaintext;
+    } catch (error) {
+      console.error("[Session] Decryption failed:", error);
+      throw new Error("Message decryption failed - authentication error");
+    }
+  });
 }
 async function saveSessionState(sessionId, state) {
   const serialized = JSON.stringify({
@@ -615,8 +777,12 @@ async function getSessionInfo(sessionId) {
 var KDF_CHAIN_KEY_SEED = "aegis_sender_chain_step";
 var KDF_MESSAGE_KEY_SEED = "aegis_sender_message_key";
 function generateSenderKey() {
+  const chainKey = generateKey();
+  if (chainKey.length !== 32) {
+    throw new Error("Generated chain key must be 32 bytes");
+  }
   return {
-    chainKey: generateKey(),
+    chainKey,
     signatureKey: new Uint8Array(0),
     // Placeholder, ideally actual Sig Pub Key
     generation: Math.floor(Date.now() / 1e3)
@@ -630,6 +796,18 @@ function ratchetChainKey(chainKey) {
   return deriveKey(chainKey, KDF_CHAIN_KEY_SEED, 32);
 }
 function encryptGroupMessage(state, groupId, senderId, plaintext) {
+  if (!state || !state.chainKey || state.chainKey.length === 0) {
+    throw new Error("Invalid sender key state");
+  }
+  if (!groupId || typeof groupId !== "string" || groupId.trim() === "") {
+    throw new Error("Group ID must be a non-empty string");
+  }
+  if (!senderId || typeof senderId !== "string" || senderId.trim() === "") {
+    throw new Error("Sender ID must be a non-empty string");
+  }
+  if (!plaintext || typeof plaintext !== "string") {
+    throw new Error("Plaintext must be a non-empty string");
+  }
   const messageKey = deriveMessageKey(state.chainKey);
   const nonce = generateNonce();
   const plaintextBytes = stringToBytes(plaintext);
@@ -646,6 +824,12 @@ function encryptGroupMessage(state, groupId, senderId, plaintext) {
   return message;
 }
 function decryptGroupMessage(currentChainKey, message) {
+  if (!currentChainKey || currentChainKey.length === 0) {
+    throw new Error("Current chain key must be a non-empty Uint8Array");
+  }
+  if (!message || !message.senderId || !message.groupId || !message.cipherText || !message.nonce) {
+    throw new Error("Invalid message format: missing required fields");
+  }
   const messageKey = deriveMessageKey(currentChainKey);
   const nonce = base64ToBytes(message.nonce);
   const ciphertext = base64ToBytes(message.cipherText);
@@ -658,11 +842,23 @@ function decryptGroupMessage(currentChainKey, message) {
 }
 
 // src/group.ts
+function validateGroupId(groupId) {
+  if (!groupId || typeof groupId !== "string" || groupId.trim() === "") {
+    throw new Error("Group ID must be a non-empty string");
+  }
+}
+function validateSenderKeyState(state) {
+  if (!state || !state.chainKey || state.chainKey.length === 0) {
+    throw new Error("Invalid sender key state");
+  }
+}
 var GROUP_STORAGE_PREFIX = "aegis_group_";
 var GroupSession = class _GroupSession {
   constructor(groupId, data) {
     __publicField(this, "groupId");
     __publicField(this, "data");
+    validateGroupId(groupId);
+    validateSenderKeyState(data.mySenderKey);
     this.groupId = groupId;
     this.data = data;
   }
@@ -677,6 +873,9 @@ var GroupSession = class _GroupSession {
    * This MUST be sent via the secure 1:1 session (encryptMessage).
    */
   createDistributionMessage(senderId) {
+    if (!senderId || typeof senderId !== "string" || senderId.trim() === "") {
+      throw new Error("Sender ID must be a non-empty string");
+    }
     return {
       type: "distribution",
       senderId,
@@ -703,6 +902,12 @@ var GroupSession = class _GroupSession {
    * O(1) operation (just one encryption).
    */
   async encrypt(plaintext, myUserId) {
+    if (!plaintext || typeof plaintext !== "string") {
+      throw new Error("Plaintext must be a non-empty string");
+    }
+    if (!myUserId || typeof myUserId !== "string" || myUserId.trim() === "") {
+      throw new Error("User ID must be a non-empty string");
+    }
     const msg = encryptGroupMessage(
       this.data.mySenderKey,
       this.groupId,
@@ -717,6 +922,9 @@ var GroupSession = class _GroupSession {
    * O(1) operation.
    */
   async decrypt(msg) {
+    if (!msg || !msg.senderId || !msg.groupId || !msg.cipherText || !msg.nonce) {
+      throw new Error("Invalid message format");
+    }
     const participant = this.data.participants[msg.senderId];
     if (!participant) {
       throw new Error(
@@ -733,15 +941,6 @@ var GroupSession = class _GroupSession {
     return plaintext;
   }
   async save() {
-    const toSave = {
-      ...this.data,
-      mySenderKey: {
-        ...this.data.mySenderKey,
-        chainKey: Array.from(this.data.mySenderKey.chainKey),
-        // Serialize as array for storage
-        signatureKey: Array.from(this.data.mySenderKey.signatureKey)
-      }
-    };
     const storageFormat = {
       groupId: this.data.groupId,
       mySenderKey: {
@@ -817,6 +1016,7 @@ export {
   exportIdentity,
   generateKey,
   generateNonce,
+  getAndConsumePublicKeyBundle,
   getGroupSession,
   getPublicKeyBundle,
   getRandomBytes,
@@ -828,5 +1028,6 @@ export {
   loadIdentity,
   saveIdentity,
   stringToBytes,
+  verifySignedPreKey,
   zeroBuffer
 };

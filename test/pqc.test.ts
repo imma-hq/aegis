@@ -5,6 +5,9 @@ import {
   saveIdentity,
   deleteIdentity,
   getPublicKeyBundle,
+  getAndConsumePublicKeyBundle,
+  exportIdentity,
+  importIdentity,
   encapsulate,
   decapsulate,
 } from "../src/pqc";
@@ -32,7 +35,7 @@ describe("PQC / Identity", () => {
     expect(loaded?.userId).toBe("user1");
     // Check key persistence
     expect(bytesToHex(loaded!.kem.secretKey)).toBe(
-      bytesToHex(id.kem.secretKey)
+      bytesToHex(id.kem.secretKey),
     );
   });
 
@@ -50,6 +53,7 @@ describe("PQC / Identity", () => {
     // Bundle is base64 and structure should match X3DH
     expect(bundle.userId).toBe("user1");
     expect(bundle.identityKey).toBeTruthy();
+    expect(bundle.sigPublicKey).toBeTruthy();
     expect(bundle.signedPreKey).toBeDefined();
     expect(bundle.signedPreKey.key).toBeTruthy();
     expect(bundle.signedPreKey.signature).toBeTruthy();
@@ -69,5 +73,41 @@ describe("PQC / Identity", () => {
     const sharedSecret = decapsulate(result.ciphertext, id.kem.secretKey);
 
     expect(bytesToHex(sharedSecret)).toBe(bytesToHex(result.sharedSecret));
+  });
+
+  it("should export and import identity with password", async () => {
+    const id = await createIdentity("export_user", "email", "export@test.com");
+    const backup = await exportIdentity("strong-password");
+    expect(backup).toBeTruthy();
+
+    // Delete and ensure no identity
+    await deleteIdentity();
+    expect(await loadIdentity()).toBeNull();
+
+    // Import with correct password
+    const imported = await importIdentity(backup, "strong-password");
+    expect(imported.userId).toBe("export_user");
+    const loaded = await loadIdentity();
+    expect(loaded).toBeTruthy();
+    expect(loaded?.userId).toBe("export_user");
+  });
+
+  it("should fail to import with wrong password", async () => {
+    await createIdentity("export_user2", "email", "export2@test.com");
+    const backup = await exportIdentity("correct-password");
+    await deleteIdentity();
+    await expect(importIdentity(backup, "wrong-password")).rejects.toThrow();
+  });
+
+  it("should consume one-time prekeys when using getAndConsumePublicKeyBundle", async () => {
+    const id = await createIdentity("otpk_user", "email", "otpk@test.com");
+    const before = (await loadIdentity())!.oneTimePreKeys.length;
+    const b1 = await getAndConsumePublicKeyBundle();
+    const after1 = (await loadIdentity())!.oneTimePreKeys.length;
+    expect(after1).toBe(before - 1);
+    const b2 = await getAndConsumePublicKeyBundle();
+    const after2 = (await loadIdentity())!.oneTimePreKeys.length;
+    expect(after2).toBe(after1 - 1);
+    expect(b1.oneTimePreKey?.id).not.toBe(b2.oneTimePreKey?.id);
   });
 });

@@ -4,6 +4,8 @@ import {
   acceptSession,
   encryptMessage,
   decryptMessage,
+  getSessionInfo,
+  deleteSession,
 } from "../src/session";
 import { createIdentity, getPublicKeyBundle } from "../src/pqc";
 import { Aegis } from "../src/config";
@@ -25,7 +27,7 @@ describe("Session & Double Ratchet", () => {
    */
   async function asUser<T>(
     userStorage: MockStorage,
-    fn: () => Promise<T>
+    fn: () => Promise<T>,
   ): Promise<T> {
     Aegis.init({ storage: userStorage });
     return fn();
@@ -34,10 +36,10 @@ describe("Session & Double Ratchet", () => {
   it("should complete a full handshake and exchange messages", async () => {
     // 1. Setup Identities
     const aliceId = await asUser(aliceStorage, () =>
-      createIdentity("alice", "email", "alice@example.com")
+      createIdentity("alice", "email", "alice@example.com"),
     );
     const bobId = await asUser(bobStorage, () =>
-      createIdentity("bob", "email", "bob@example.com")
+      createIdentity("bob", "email", "bob@example.com"),
     );
 
     const sessionId = "session_1";
@@ -48,7 +50,7 @@ describe("Session & Double Ratchet", () => {
 
     // Alice inits
     const initData = await asUser(aliceStorage, () =>
-      initializeSession(sessionId, bobBundle)
+      initializeSession(sessionId, bobBundle),
     );
 
     // Bob accepts
@@ -56,36 +58,36 @@ describe("Session & Double Ratchet", () => {
       identitySecret: bobId.kem.secretKey,
       signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
       oneTimePreKeySecret: bobId.oneTimePreKeys.find(
-        (k) => k.id === bobBundle.oneTimePreKey!.id
+        (k) => k.id === bobBundle.oneTimePreKey!.id,
       )?.keyPair.secretKey,
     };
 
     await asUser(bobStorage, () =>
-      acceptSession(sessionId, initData.ciphertexts, bobKeys)
+      acceptSession(sessionId, initData.ciphertexts, bobKeys),
     );
 
     // 3. Message Exchange
     // Alice sends M1
     const msg1 = "Hello Bob";
     const encrypted1 = await asUser(aliceStorage, () =>
-      encryptMessage(sessionId, msg1)
+      encryptMessage(sessionId, msg1),
     );
 
     // Bob receives M1
     const decrypted1 = await asUser(bobStorage, () =>
-      decryptMessage(encrypted1)
+      decryptMessage(encrypted1),
     );
     expect(decrypted1).toBe(msg1);
 
     // Bob sends M2
     const msg2 = "Hi Alice";
     const encrypted2 = await asUser(bobStorage, () =>
-      encryptMessage(sessionId, msg2)
+      encryptMessage(sessionId, msg2),
     );
 
     // Alice receives M2
     const decrypted2 = await asUser(aliceStorage, () =>
-      decryptMessage(encrypted2)
+      decryptMessage(encrypted2),
     );
     expect(decrypted2).toBe(msg2);
   });
@@ -93,10 +95,10 @@ describe("Session & Double Ratchet", () => {
   it("should handle ratchet forward secrecy (chain keys change)", async () => {
     // 1. Setup
     const aliceId = await asUser(aliceStorage, () =>
-      createIdentity("alice", "email", "a@a.com")
+      createIdentity("alice", "email", "a@a.com"),
     );
     const bobId = await asUser(bobStorage, () =>
-      createIdentity("bob", "email", "b@b.com")
+      createIdentity("bob", "email", "b@b.com"),
     );
 
     const sessionId = "ratchet_test";
@@ -104,27 +106,27 @@ describe("Session & Double Ratchet", () => {
     // Handshake
     const bobBundle = await asUser(bobStorage, () => getPublicKeyBundle());
     const initData = await asUser(aliceStorage, () =>
-      initializeSession(sessionId, bobBundle)
+      initializeSession(sessionId, bobBundle),
     );
     const bobKeys = {
       identitySecret: bobId.kem.secretKey,
       signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
       oneTimePreKeySecret: bobId.oneTimePreKeys.find(
-        (k) => k.id === bobBundle.oneTimePreKey!.id
+        (k) => k.id === bobBundle.oneTimePreKey!.id,
       )?.keyPair.secretKey,
     };
     await asUser(bobStorage, () =>
-      acceptSession(sessionId, initData.ciphertexts, bobKeys)
+      acceptSession(sessionId, initData.ciphertexts, bobKeys),
     );
 
     // 2. Alice sends 2 messages
     // M1
     const enc1 = await asUser(aliceStorage, () =>
-      encryptMessage(sessionId, "msg1")
+      encryptMessage(sessionId, "msg1"),
     );
     // M2
     const enc2 = await asUser(aliceStorage, () =>
-      encryptMessage(sessionId, "msg2")
+      encryptMessage(sessionId, "msg2"),
     );
 
     // Nonces should differ
@@ -145,27 +147,27 @@ describe("Session & Double Ratchet", () => {
   it("should handle out-of-order decryption (Ratchet catch-up)", async () => {
     // 1. Setup
     const aliceId = await asUser(aliceStorage, () =>
-      createIdentity("alice", "email", "a@a.com")
+      createIdentity("alice", "email", "a@a.com"),
     );
     const bobId = await asUser(bobStorage, () =>
-      createIdentity("bob", "email", "b@b.com")
+      createIdentity("bob", "email", "b@b.com"),
     );
     const sessionId = "reorder_test";
 
     // Handshake
     const bobBundle = await asUser(bobStorage, () => getPublicKeyBundle());
     const initData = await asUser(aliceStorage, () =>
-      initializeSession(sessionId, bobBundle)
+      initializeSession(sessionId, bobBundle),
     );
     const bobKeys = {
       identitySecret: bobId.kem.secretKey,
       signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
       oneTimePreKeySecret: bobId.oneTimePreKeys.find(
-        (k) => k.id === bobBundle.oneTimePreKey!.id
+        (k) => k.id === bobBundle.oneTimePreKey!.id,
       )?.keyPair.secretKey,
     };
     await asUser(bobStorage, () =>
-      acceptSession(sessionId, initData.ciphertexts, bobKeys)
+      acceptSession(sessionId, initData.ciphertexts, bobKeys),
     );
 
     // 2. Alice sends M1, M2, M3
@@ -194,7 +196,213 @@ describe("Session & Double Ratchet", () => {
 
     // Verify this security property:
     await expect(asUser(bobStorage, () => decryptMessage(m1))).rejects.toThrow(
-      "Message number too old"
+      "Message number too old",
     );
+  });
+
+  it("should fail acceptSession when OTPK ciphertext present but secret missing", async () => {
+    // Setup
+    const aliceId = await asUser(aliceStorage, () =>
+      createIdentity("alice", "email", "alice_otpk@example.com"),
+    );
+    const bobId = await asUser(bobStorage, () =>
+      createIdentity("bob", "email", "bob_otpk@example.com"),
+    );
+
+    const sessionId = "otpk_missing_test";
+
+    // Handshake: Bob publishes bundle (including OTPK)
+    const bobBundle = await asUser(bobStorage, () => getPublicKeyBundle());
+    const initData = await asUser(aliceStorage, () =>
+      initializeSession(sessionId, bobBundle),
+    );
+
+    // Bob tries to accept but DOES NOT supply the oneTimePreKeySecret
+    const bobKeysMissingOTPK = {
+      identitySecret: bobId.kem.secretKey,
+      signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
+      // note: no oneTimePreKeySecret
+    };
+
+    await expect(
+      asUser(bobStorage, () =>
+        acceptSession(sessionId, initData.ciphertexts, bobKeysMissingOTPK),
+      ),
+    ).rejects.toThrow("Missing One-Time PreKey to decrypt session");
+  });
+
+  it("should detect tampered ciphertext and fail decryption", async () => {
+    // Setup full handshake
+    const aliceId = await asUser(aliceStorage, () =>
+      createIdentity("alice", "email", "alice_tamper@example.com"),
+    );
+    const bobId = await asUser(bobStorage, () =>
+      createIdentity("bob", "email", "bob_tamper@example.com"),
+    );
+    const sid = "tamper_test";
+
+    const bobBundle2 = await asUser(bobStorage, () => getPublicKeyBundle());
+    const initData2 = await asUser(aliceStorage, () =>
+      initializeSession(sid, bobBundle2),
+    );
+    const bobKeys2 = {
+      identitySecret: bobId.kem.secretKey,
+      signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
+      oneTimePreKeySecret: bobId.oneTimePreKeys.find(
+        (k) => k.id === bobBundle2.oneTimePreKey!.id,
+      )?.keyPair.secretKey,
+    };
+    await asUser(bobStorage, () =>
+      acceptSession(sid, initData2.ciphertexts, bobKeys2),
+    );
+
+    // Alice sends a message
+    const enc = await asUser(aliceStorage, () =>
+      encryptMessage(sid, "this will be tampered"),
+    );
+
+    // Tamper with ciphertext (replace first char of base64)
+    const tampered = { ...enc, ciphertext: enc.ciphertext.replace(/^./, "A") };
+
+    // Bob should fail to decrypt (auth error)
+    await expect(
+      asUser(bobStorage, () => decryptMessage(tampered)),
+    ).rejects.toThrow("Message decryption failed - authentication error");
+  });
+
+  it("getSessionInfo returns metadata and deleteSession removes it", async () => {
+    // Setup handshake
+    const aliceId = await asUser(aliceStorage, () =>
+      createIdentity("alice", "email", "alice_meta@example.com"),
+    );
+    const bobId = await asUser(bobStorage, () =>
+      createIdentity("bob", "email", "bob_meta@example.com"),
+    );
+    const metaSid = "meta_test";
+
+    // Handshake
+    const bobBundleMeta = await asUser(bobStorage, () => getPublicKeyBundle());
+    const initMeta = await asUser(aliceStorage, () =>
+      initializeSession(metaSid, bobBundleMeta),
+    );
+    const bobKeysMeta = {
+      identitySecret: bobId.kem.secretKey,
+      signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
+      oneTimePreKeySecret: bobId.oneTimePreKeys.find(
+        (k) => k.id === bobBundleMeta.oneTimePreKey!.id,
+      )?.keyPair.secretKey,
+    };
+    await asUser(bobStorage, () =>
+      acceptSession(metaSid, initMeta.ciphertexts, bobKeysMeta),
+    );
+
+    // Send message to increment counters
+    await asUser(aliceStorage, () => encryptMessage(metaSid, "hi"));
+
+    // getSessionInfo from Alice side
+    const info = await asUser(aliceStorage, () => getSessionInfo(metaSid));
+    expect(info).toBeTruthy();
+    expect(info!.messagesSent).toBeGreaterThanOrEqual(1);
+
+    // deleteSession then info is null
+    await asUser(aliceStorage, () => deleteSession(metaSid));
+    const after = await asUser(aliceStorage, () => getSessionInfo(metaSid));
+    expect(after).toBeNull();
+  });
+
+  it("concurrent sends produce unique message numbers", async () => {
+    const aliceId = await asUser(aliceStorage, () =>
+      createIdentity("alice_concurrent", "email", "a@c.com"),
+    );
+    const bobId = await asUser(bobStorage, () =>
+      createIdentity("bob_concurrent", "email", "b@c.com"),
+    );
+    const sid = "concurrency_send_test";
+
+    const bobBundle = await asUser(bobStorage, () => getPublicKeyBundle());
+    const initData = await asUser(aliceStorage, () =>
+      initializeSession(sid, bobBundle),
+    );
+    const bobKeys = {
+      identitySecret: bobId.kem.secretKey,
+      signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
+      oneTimePreKeySecret: bobId.oneTimePreKeys.find(
+        (k) => k.id === bobBundle.oneTimePreKey!.id,
+      )?.keyPair.secretKey,
+    };
+    await asUser(bobStorage, () =>
+      acceptSession(sid, initData.ciphertexts, bobKeys),
+    );
+
+    const N = 10;
+    // Start N concurrent encrypts from Alice
+    const encs = await Promise.all(
+      Array.from({ length: N }).map(() =>
+        asUser(aliceStorage, () => encryptMessage(sid, "concurrent")),
+      ),
+    );
+
+    // Ensure message numbers are unique and in expected 0..N-1 set
+    const msgNums = encs.map((e) => e.messageNumber).sort((a, b) => a - b);
+    expect(msgNums).toHaveLength(N);
+    for (let i = 0; i < N; i++) {
+      expect(msgNums[i]).toBe(i);
+    }
+
+    // Decrypt messages in order on Bob side
+    const encsSorted = encs
+      .slice()
+      .sort((a, b) => a.messageNumber - b.messageNumber);
+    for (const enc of encsSorted) {
+      const plain = await asUser(bobStorage, () => decryptMessage(enc));
+      expect(plain).toBe("concurrent");
+    }
+  });
+
+  it("concurrent decrypts can process multiple messages", async () => {
+    const aliceId = await asUser(aliceStorage, () =>
+      createIdentity("alice_decrypt", "email", "a@d.com"),
+    );
+    const bobId = await asUser(bobStorage, () =>
+      createIdentity("bob_decrypt", "email", "b@d.com"),
+    );
+    const sid = "concurrency_decrypt_test";
+
+    const bobBundle = await asUser(bobStorage, () => getPublicKeyBundle());
+    const initData = await asUser(aliceStorage, () =>
+      initializeSession(sid, bobBundle),
+    );
+    const bobKeys = {
+      identitySecret: bobId.kem.secretKey,
+      signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
+      oneTimePreKeySecret: bobId.oneTimePreKeys.find(
+        (k) => k.id === bobBundle.oneTimePreKey!.id,
+      )?.keyPair.secretKey,
+    };
+    await asUser(bobStorage, () =>
+      acceptSession(sid, initData.ciphertexts, bobKeys),
+    );
+
+    const N = 10;
+    // Create N messages sequentially so they have increasing message numbers
+    const messages: string[] = [];
+    const encs: any[] = [];
+    for (let i = 0; i < N; i++) {
+      const m = `m-${i}`;
+      messages.push(m);
+      const enc = await asUser(aliceStorage, () => encryptMessage(sid, m));
+      encs.push(enc);
+    }
+
+    // Attempt to decrypt all messages concurrently on Bob's side
+    const results = await Promise.all(
+      encs.map((enc) => asUser(bobStorage, () => decryptMessage(enc))),
+    );
+
+    // Results should contain each message (order corresponds to encs order)
+    expect(results).toHaveLength(N);
+    for (let i = 0; i < N; i++) {
+      expect(results[i]).toBe(messages[i]);
+    }
   });
 });
