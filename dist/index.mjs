@@ -1,3 +1,7 @@
+var __defProp = Object.defineProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+
 // src/pqc.ts
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 
@@ -130,6 +134,9 @@ function constantTimeEqual(a, b) {
   }
   return result === 0;
 }
+function zeroBuffer(buffer) {
+  buffer.fill(0);
+}
 
 // src/config.ts
 var config = null;
@@ -157,7 +164,7 @@ var Aegis = {
 
 // src/pqc.ts
 var IDENTITY_STORAGE_KEY = "aegis_pqc_identity";
-var IDENTITY_VERSION = "1.0.0";
+var IDENTITY_VERSION = "2.0.0";
 function generateKEMKeyPair() {
   const keyPair = ml_kem768.keygen();
   return {
@@ -175,6 +182,8 @@ function generateSignatureKeyPair() {
 async function createIdentity(userId, authMethod, identifier) {
   const kem = generateKEMKeyPair();
   const sig = generateSignatureKeyPair();
+  const signedPreKey = generateSignedPreKey(kem, sig);
+  const oneTimePreKeys = generateOneTimePreKeys(50);
   const identity = {
     kem,
     sig,
@@ -182,13 +191,37 @@ async function createIdentity(userId, authMethod, identifier) {
     authMethod,
     identifier,
     createdAt: Date.now(),
-    version: IDENTITY_VERSION
+    version: IDENTITY_VERSION,
+    signedPreKey,
+    oneTimePreKeys
   };
   await saveIdentity(identity);
   console.log("[PQC Identity] Created new identity for user:", userId);
   return identity;
 }
+function generateSignedPreKey(identityKem, identitySig) {
+  const keyPair = generateKEMKeyPair();
+  const signature = hash(keyPair.publicKey);
+  return {
+    id: Math.floor(Date.now() / 1e3),
+    // Simple ID scheme
+    keyPair,
+    signature,
+    createdAt: Date.now()
+  };
+}
+function generateOneTimePreKeys(count) {
+  const keys = [];
+  for (let i = 0; i < count; i++) {
+    keys.push({
+      id: i,
+      keyPair: generateKEMKeyPair()
+    });
+  }
+  return keys;
+}
 async function saveIdentity(identity) {
+  const extendedIdentity = identity;
   const serialized = JSON.stringify({
     kem: {
       publicKey: bytesToBase64(identity.kem.publicKey),
@@ -198,6 +231,20 @@ async function saveIdentity(identity) {
       publicKey: bytesToBase64(identity.sig.publicKey),
       secretKey: bytesToBase64(identity.sig.secretKey)
     },
+    signedPreKey: extendedIdentity.signedPreKey ? {
+      id: extendedIdentity.signedPreKey.id,
+      key: {
+        pub: bytesToBase64(extendedIdentity.signedPreKey.keyPair.publicKey),
+        sec: bytesToBase64(extendedIdentity.signedPreKey.keyPair.secretKey)
+      },
+      sig: bytesToBase64(extendedIdentity.signedPreKey.signature),
+      created: extendedIdentity.signedPreKey.createdAt
+    } : void 0,
+    oneTimePreKeys: extendedIdentity.oneTimePreKeys ? extendedIdentity.oneTimePreKeys.map((k) => ({
+      id: k.id,
+      pub: bytesToBase64(k.keyPair.publicKey),
+      sec: bytesToBase64(k.keyPair.secretKey)
+    })) : [],
     userId: identity.userId,
     authMethod: identity.authMethod,
     identifier: identity.identifier,
@@ -213,7 +260,7 @@ async function loadIdentity() {
   }
   try {
     const data = JSON.parse(serialized);
-    return {
+    const identity = {
       kem: {
         publicKey: base64ToBytes(data.kem.publicKey),
         secretKey: base64ToBytes(data.kem.secretKey)
@@ -222,12 +269,30 @@ async function loadIdentity() {
         publicKey: base64ToBytes(data.sig.publicKey),
         secretKey: base64ToBytes(data.sig.secretKey)
       },
+      signedPreKey: data.signedPreKey ? {
+        id: data.signedPreKey.id,
+        keyPair: {
+          publicKey: base64ToBytes(data.signedPreKey.key.pub),
+          secretKey: base64ToBytes(data.signedPreKey.key.sec)
+        },
+        signature: base64ToBytes(data.signedPreKey.sig),
+        createdAt: data.signedPreKey.created
+      } : void 0,
+      // Cast for compatibility if missing in old versions
+      oneTimePreKeys: data.oneTimePreKeys ? data.oneTimePreKeys.map((k) => ({
+        id: k.id,
+        keyPair: {
+          publicKey: base64ToBytes(k.pub),
+          secretKey: base64ToBytes(k.sec)
+        }
+      })) : [],
       userId: data.userId,
       authMethod: data.authMethod,
       identifier: data.identifier,
       createdAt: data.createdAt,
       version: data.version
     };
+    return identity;
   } catch (error) {
     console.error("[PQC Identity] Failed to parse identity:", error);
     return null;
@@ -317,9 +382,18 @@ async function getPublicKeyBundle() {
   if (!identity) {
     throw new Error("No identity found");
   }
+  const otpk = identity.oneTimePreKeys.length > 0 ? identity.oneTimePreKeys[0] : void 0;
   return {
-    kemPublicKey: bytesToBase64(identity.kem.publicKey),
-    sigPublicKey: bytesToBase64(identity.sig.publicKey),
+    identityKey: bytesToBase64(identity.kem.publicKey),
+    signedPreKey: {
+      id: identity.signedPreKey.id,
+      key: bytesToBase64(identity.signedPreKey.keyPair.publicKey),
+      signature: bytesToBase64(identity.signedPreKey.signature)
+    },
+    oneTimePreKey: otpk ? {
+      id: otpk.id,
+      key: bytesToBase64(otpk.keyPair.publicKey)
+    } : void 0,
     userId: identity.userId
   };
 }
@@ -336,9 +410,32 @@ function decapsulate(ciphertext, secretKey) {
 
 // src/session.ts
 var SESSION_KEY_PREFIX = "aegis_session_";
-async function initializeSession(sessionId, recipientKemPublicKey) {
-  const { sharedSecret, ciphertext } = encapsulate(recipientKemPublicKey);
-  const rootKey = deriveKey(sharedSecret, "aegis_root_key_v1", 32);
+async function initializeSession(sessionId, recipientBundle) {
+  const sharedSecrets = [];
+  const ciphertexts = {};
+  const ikBytes = base64ToBytes(recipientBundle.identityKey);
+  const encIk = encapsulate(ikBytes);
+  sharedSecrets.push(encIk.sharedSecret);
+  ciphertexts.ik = bytesToBase64(encIk.ciphertext);
+  const spkBytes = base64ToBytes(recipientBundle.signedPreKey.key);
+  const encSpk = encapsulate(spkBytes);
+  sharedSecrets.push(encSpk.sharedSecret);
+  ciphertexts.spk = bytesToBase64(encSpk.ciphertext);
+  if (recipientBundle.oneTimePreKey) {
+    const otpkBytes = base64ToBytes(recipientBundle.oneTimePreKey.key);
+    const encOtpk = encapsulate(otpkBytes);
+    sharedSecrets.push(encOtpk.sharedSecret);
+    ciphertexts.otpk = bytesToBase64(encOtpk.ciphertext);
+  }
+  const combinedSecret = new Uint8Array(
+    sharedSecrets.reduce((acc, curr) => acc + curr.length, 0)
+  );
+  let offset = 0;
+  for (const secret of sharedSecrets) {
+    combinedSecret.set(secret, offset);
+    offset += secret.length;
+  }
+  const rootKey = deriveKey(combinedSecret, "aegis_x3dh_root_v2", 32);
   const sendChainKey = deriveKey(rootKey, "aegis_send_chain_v1", 32);
   const receiveChainKey = deriveKey(rootKey, "aegis_receive_chain_v1", 32);
   const state = {
@@ -352,17 +449,36 @@ async function initializeSession(sessionId, recipientKemPublicKey) {
     lastUsed: Date.now()
   };
   await saveSessionState(sessionId, state);
-  console.log("[Session] Initialized new session:", sessionId);
+  console.log("[Session] Initialized new X3DH session:", sessionId);
   return {
     sessionId,
-    kemCiphertext: bytesToBase64(ciphertext),
-    initiatorKemPublic: ""
+    ciphertexts
   };
 }
-async function acceptSession(sessionId, kemCiphertext, recipientKemSecretKey) {
-  const ciphertextBytes = base64ToBytes(kemCiphertext);
-  const sharedSecret = decapsulate(ciphertextBytes, recipientKemSecretKey);
-  const rootKey = deriveKey(sharedSecret, "aegis_root_key_v1", 32);
+async function acceptSession(sessionId, ciphertexts, keys) {
+  const sharedSecrets = [];
+  sharedSecrets.push(
+    decapsulate(base64ToBytes(ciphertexts.ik), keys.identitySecret)
+  );
+  sharedSecrets.push(
+    decapsulate(base64ToBytes(ciphertexts.spk), keys.signedPreKeySecret)
+  );
+  if (ciphertexts.otpk && keys.oneTimePreKeySecret) {
+    sharedSecrets.push(
+      decapsulate(base64ToBytes(ciphertexts.otpk), keys.oneTimePreKeySecret)
+    );
+  } else if (ciphertexts.otpk && !keys.oneTimePreKeySecret) {
+    throw new Error("Missing One-Time PreKey to decrypt session");
+  }
+  const combinedSecret = new Uint8Array(
+    sharedSecrets.reduce((acc, curr) => acc + curr.length, 0)
+  );
+  let offset = 0;
+  for (const secret of sharedSecrets) {
+    combinedSecret.set(secret, offset);
+    offset += secret.length;
+  }
+  const rootKey = deriveKey(combinedSecret, "aegis_x3dh_root_v2", 32);
   const sendChainKey = deriveKey(rootKey, "aegis_send_chain_v1", 32);
   const receiveChainKey = deriveKey(rootKey, "aegis_receive_chain_v1", 32);
   const state = {
@@ -378,7 +494,7 @@ async function acceptSession(sessionId, kemCiphertext, recipientKemSecretKey) {
     lastUsed: Date.now()
   };
   await saveSessionState(sessionId, state);
-  console.log("[Session] Accepted session:", sessionId);
+  console.log("[Session] Accepted X3DH session:", sessionId);
 }
 async function encryptMessage(sessionId, plaintext) {
   const state = await loadSessionState(sessionId);
@@ -495,33 +611,192 @@ async function getSessionInfo(sessionId) {
   };
 }
 
-// src/group.ts
-async function sendGroupMessage(groupId, participantSessionIds, plaintext) {
-  const bundle = {
-    groupId,
-    messages: {}
+// src/sender-keys.ts
+var KDF_CHAIN_KEY_SEED = "aegis_sender_chain_step";
+var KDF_MESSAGE_KEY_SEED = "aegis_sender_message_key";
+function generateSenderKey() {
+  return {
+    chainKey: generateKey(),
+    signatureKey: new Uint8Array(0),
+    // Placeholder, ideally actual Sig Pub Key
+    generation: Math.floor(Date.now() / 1e3)
+    // Use timestamp as generation ID for simplicity
   };
-  const promises = Object.entries(participantSessionIds).map(
-    async ([userId, sessionId]) => {
-      try {
-        const encrypted = await encryptMessage(sessionId, plaintext);
-        bundle.messages[userId] = encrypted;
-      } catch (error) {
-        console.error(
-          `Failed to encrypt for user ${userId} in session ${sessionId}:`,
-          error
-        );
-      }
-    }
-  );
-  await Promise.all(promises);
-  return bundle;
 }
-async function decryptGroupMessage(encryptedMsg) {
-  return decryptMessage(encryptedMsg);
+function deriveMessageKey(chainKey) {
+  return deriveKey(chainKey, KDF_MESSAGE_KEY_SEED, 32);
+}
+function ratchetChainKey(chainKey) {
+  return deriveKey(chainKey, KDF_CHAIN_KEY_SEED, 32);
+}
+function encryptGroupMessage(state, groupId, senderId, plaintext) {
+  const messageKey = deriveMessageKey(state.chainKey);
+  const nonce = generateNonce();
+  const plaintextBytes = stringToBytes(plaintext);
+  const cipherText = encrypt(messageKey, nonce, plaintextBytes);
+  const message = {
+    type: "message",
+    senderId,
+    groupId,
+    generation: state.generation,
+    cipherText: bytesToBase64(cipherText),
+    nonce: bytesToBase64(nonce)
+  };
+  state.chainKey = ratchetChainKey(state.chainKey);
+  return message;
+}
+function decryptGroupMessage(currentChainKey, message) {
+  const messageKey = deriveMessageKey(currentChainKey);
+  const nonce = base64ToBytes(message.nonce);
+  const ciphertext = base64ToBytes(message.cipherText);
+  const plaintextBytes = decrypt(messageKey, nonce, ciphertext);
+  const nextChainKey = ratchetChainKey(currentChainKey);
+  return {
+    plaintext: bytesToString(plaintextBytes),
+    nextChainKey
+  };
+}
+
+// src/group.ts
+var GROUP_STORAGE_PREFIX = "aegis_group_";
+var GroupSession = class _GroupSession {
+  constructor(groupId, data) {
+    __publicField(this, "groupId");
+    __publicField(this, "data");
+    this.groupId = groupId;
+    this.data = data;
+  }
+  /**
+   * Load or Create a Group Session
+   */
+  static async get(groupId) {
+    return _GroupSession.getLoaded(groupId);
+  }
+  /**
+   * Create a Distribution Message to send to a new participant.
+   * This MUST be sent via the secure 1:1 session (encryptMessage).
+   */
+  createDistributionMessage(senderId) {
+    return {
+      type: "distribution",
+      senderId,
+      groupId: this.data.groupId,
+      chainKey: bytesToBase64(this.data.mySenderKey.chainKey),
+      signatureKey: bytesToBase64(this.data.mySenderKey.signatureKey),
+      generation: this.data.mySenderKey.generation
+    };
+  }
+  /**
+   * Process an incoming Distribution Message from another member.
+   * Call this AFTER decrypting the 1:1 message containing this payload.
+   */
+  async processDistributionMessage(payload) {
+    if (payload.groupId !== this.groupId) return;
+    this.data.participants[payload.senderId] = {
+      currentChainKey: payload.chainKey
+    };
+    await this.save();
+    console.log(`[Group] Updated sender key for ${payload.senderId}`);
+  }
+  /**
+   * Encrypt a message for the group.
+   * O(1) operation (just one encryption).
+   */
+  async encrypt(plaintext, myUserId) {
+    const msg = encryptGroupMessage(
+      this.data.mySenderKey,
+      this.groupId,
+      myUserId,
+      plaintext
+    );
+    await this.save();
+    return msg;
+  }
+  /**
+   * Decrypt a message from the group.
+   * O(1) operation.
+   */
+  async decrypt(msg) {
+    const participant = this.data.participants[msg.senderId];
+    if (!participant) {
+      throw new Error(
+        `No sender key found for ${msg.senderId}. Did you receive a distribution message?`
+      );
+    }
+    const currentChainKey = base64ToBytes(participant.currentChainKey);
+    const { plaintext, nextChainKey } = decryptGroupMessage(
+      currentChainKey,
+      msg
+    );
+    participant.currentChainKey = bytesToBase64(nextChainKey);
+    await this.save();
+    return plaintext;
+  }
+  async save() {
+    const toSave = {
+      ...this.data,
+      mySenderKey: {
+        ...this.data.mySenderKey,
+        chainKey: Array.from(this.data.mySenderKey.chainKey),
+        // Serialize as array for storage
+        signatureKey: Array.from(this.data.mySenderKey.signatureKey)
+      }
+    };
+    const storageFormat = {
+      groupId: this.data.groupId,
+      mySenderKey: {
+        chainKey: bytesToBase64(this.data.mySenderKey.chainKey),
+        signatureKey: bytesToBase64(this.data.mySenderKey.signatureKey),
+        generation: this.data.mySenderKey.generation
+      },
+      participants: this.data.participants
+    };
+    await Aegis.getStorage().setItem(
+      `${GROUP_STORAGE_PREFIX}${this.groupId}`,
+      JSON.stringify(storageFormat)
+    );
+  }
+  // Override static get to handle deserialization
+  static async getLoaded(groupId) {
+    const key = `${GROUP_STORAGE_PREFIX}${groupId}`;
+    const stored = await Aegis.getStorage().getItem(key);
+    if (!stored) {
+      const newData = {
+        groupId,
+        mySenderKey: generateSenderKey(),
+        participants: {}
+      };
+      const storageFormat = {
+        groupId: newData.groupId,
+        mySenderKey: {
+          chainKey: bytesToBase64(newData.mySenderKey.chainKey),
+          signatureKey: bytesToBase64(newData.mySenderKey.signatureKey),
+          generation: newData.mySenderKey.generation
+        },
+        participants: newData.participants
+      };
+      await Aegis.getStorage().setItem(key, JSON.stringify(storageFormat));
+      return new _GroupSession(groupId, newData);
+    }
+    const raw = JSON.parse(stored);
+    const data = {
+      groupId: raw.groupId,
+      mySenderKey: {
+        chainKey: base64ToBytes(raw.mySenderKey.chainKey),
+        signatureKey: base64ToBytes(raw.mySenderKey.signatureKey),
+        generation: raw.mySenderKey.generation
+      },
+      participants: raw.participants
+    };
+    return new _GroupSession(groupId, data);
+  }
+};
+async function getGroupSession(groupId) {
+  return GroupSession.getLoaded(groupId);
 }
 export {
   Aegis,
+  GroupSession,
   acceptSession,
   base64ToBytes,
   bytesToBase64,
@@ -532,7 +807,6 @@ export {
   createIdentity,
   decapsulate,
   decrypt,
-  decryptGroupMessage,
   decryptMessage,
   deleteIdentity,
   deleteSession,
@@ -543,6 +817,7 @@ export {
   exportIdentity,
   generateKey,
   generateNonce,
+  getGroupSession,
   getPublicKeyBundle,
   getRandomBytes,
   getSessionInfo,
@@ -552,6 +827,6 @@ export {
   initializeSession,
   loadIdentity,
   saveIdentity,
-  sendGroupMessage,
-  stringToBytes
+  stringToBytes,
+  zeroBuffer
 };

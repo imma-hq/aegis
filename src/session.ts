@@ -42,26 +42,62 @@ interface EncryptedMessage {
 
 interface SessionInitData {
   sessionId: string;
-  kemCiphertext: string;
-  initiatorKemPublic: string;
+  ciphertexts: {
+    ik: string; // Ciphertext for Identity Key (Authenticity)
+    spk: string; // Ciphertext for Signed Pre-Key (Semi-Ephemeral)
+    otpk?: string; // Ciphertext for One-Time Pre-Key (Forward Secrecy)
+  };
 }
 
 const SESSION_KEY_PREFIX = "aegis_session_";
 
 /**
- * Initialize a new session as the initiator
- * @param recipientKemPublicKey - Recipient's KEM public key
- * @param initiatorKemSecretKey - Initiator's KEM secret key
+ * Initialize a new session as the initiator (X3DH-like)
+ * @param recipientBundle - The recipient's public key bundle (IK, SPK, OTPK)
  */
 export async function initializeSession(
   sessionId: string,
-  recipientKemPublicKey: Uint8Array
+  recipientBundle: {
+    identityKey: string;
+    signedPreKey: { id: number; key: string; signature: string };
+    oneTimePreKey?: { id: number; key: string };
+  }
 ): Promise<SessionInitData> {
-  // Perform key encapsulation
-  const { sharedSecret, ciphertext } = encapsulate(recipientKemPublicKey);
+  const sharedSecrets: Uint8Array[] = [];
+  const ciphertexts: any = {};
 
-  // Derive root key and chain keys from shared secret
-  const rootKey = deriveKey(sharedSecret, "aegis_root_key_v1", 32);
+  // 1. Encapsulate to Identity Key (Authenticity/Basic)
+  const ikBytes = base64ToBytes(recipientBundle.identityKey);
+  const encIk = encapsulate(ikBytes);
+  sharedSecrets.push(encIk.sharedSecret);
+  ciphertexts.ik = bytesToBase64(encIk.ciphertext);
+
+  // 2. Encapsulate to Signed Pre-Key
+  const spkBytes = base64ToBytes(recipientBundle.signedPreKey.key);
+  const encSpk = encapsulate(spkBytes);
+  sharedSecrets.push(encSpk.sharedSecret);
+  ciphertexts.spk = bytesToBase64(encSpk.ciphertext);
+
+  // 3. Encapsulate to One-Time Pre-Key (if present)
+  if (recipientBundle.oneTimePreKey) {
+    const otpkBytes = base64ToBytes(recipientBundle.oneTimePreKey.key);
+    const encOtpk = encapsulate(otpkBytes);
+    sharedSecrets.push(encOtpk.sharedSecret);
+    ciphertexts.otpk = bytesToBase64(encOtpk.ciphertext);
+  }
+
+  // Combine secrets: KDF(S1 || S2 || S3)
+  const combinedSecret = new Uint8Array(
+    sharedSecrets.reduce((acc, curr) => acc + curr.length, 0)
+  );
+  let offset = 0;
+  for (const secret of sharedSecrets) {
+    combinedSecret.set(secret, offset);
+    offset += secret.length;
+  }
+
+  // Derive root key and chain keys from combined shared secret
+  const rootKey = deriveKey(combinedSecret, "aegis_x3dh_root_v2", 32);
   const sendChainKey = deriveKey(rootKey, "aegis_send_chain_v1", 32);
   const receiveChainKey = deriveKey(rootKey, "aegis_receive_chain_v1", 32);
 
@@ -78,36 +114,66 @@ export async function initializeSession(
   };
 
   await saveSessionState(sessionId, state);
-  console.log("[Session] Initialized new session:", sessionId);
+  console.log("[Session] Initialized new X3DH session:", sessionId);
 
   return {
     sessionId,
-    kemCiphertext: bytesToBase64(ciphertext),
-    initiatorKemPublic: "",
+    ciphertexts,
   };
 }
 
 /**
  * Accept a session as the recipient
- * @param sessionId - Session ID from initiator
- * @param kemCiphertext - KEM ciphertext from initiator
- * @param recipientKemSecretKey - Recipient's KEM secret key
+ * @param sessionId - Session ID
+ * @param ciphertexts - Ciphertexts from initiator (ik, spk, otpk)
+ * @param keys - The user's keys (IK sec, SPK sec, OTPK sec)
  */
 export async function acceptSession(
   sessionId: string,
-  kemCiphertext: string,
-  recipientKemSecretKey: Uint8Array
+  ciphertexts: { ik: string; spk: string; otpk?: string },
+  keys: {
+    identitySecret: Uint8Array;
+    signedPreKeySecret: Uint8Array;
+    oneTimePreKeySecret?: Uint8Array;
+  }
 ): Promise<void> {
-  // Decapsulate to get shared secret
-  const ciphertextBytes = base64ToBytes(kemCiphertext);
-  const sharedSecret = decapsulate(ciphertextBytes, recipientKemSecretKey);
+  const sharedSecrets: Uint8Array[] = [];
 
-  // Derive same keys as initiator
-  const rootKey = deriveKey(sharedSecret, "aegis_root_key_v1", 32);
+  // 1. Decapsulate IK
+  sharedSecrets.push(
+    decapsulate(base64ToBytes(ciphertexts.ik), keys.identitySecret)
+  );
+
+  // 2. Decapsulate SPK
+  sharedSecrets.push(
+    decapsulate(base64ToBytes(ciphertexts.spk), keys.signedPreKeySecret)
+  );
+
+  // 3. Decapsulate OTPK (if present and we have the key)
+  if (ciphertexts.otpk && keys.oneTimePreKeySecret) {
+    sharedSecrets.push(
+      decapsulate(base64ToBytes(ciphertexts.otpk), keys.oneTimePreKeySecret)
+    );
+  } else if (ciphertexts.otpk && !keys.oneTimePreKeySecret) {
+    throw new Error("Missing One-Time PreKey to decrypt session");
+  }
+
+  // Combine secrets
+  const combinedSecret = new Uint8Array(
+    sharedSecrets.reduce((acc, curr) => acc + curr.length, 0)
+  );
+  let offset = 0;
+  for (const secret of sharedSecrets) {
+    combinedSecret.set(secret, offset);
+    offset += secret.length;
+  }
+
+  // Derive same keys
+  const rootKey = deriveKey(combinedSecret, "aegis_x3dh_root_v2", 32);
   const sendChainKey = deriveKey(rootKey, "aegis_send_chain_v1", 32);
   const receiveChainKey = deriveKey(rootKey, "aegis_receive_chain_v1", 32);
 
-  // Create session state (note: send/receive are swapped from initiator's perspective)
+  // Create session state (swapped)
   const state: SessionState = {
     sessionId,
     sendChainKey: receiveChainKey, // Swapped
@@ -120,7 +186,7 @@ export async function acceptSession(
   };
 
   await saveSessionState(sessionId, state);
-  console.log("[Session] Accepted session:", sessionId);
+  console.log("[Session] Accepted X3DH session:", sessionId);
 }
 
 /**

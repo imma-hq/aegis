@@ -47,10 +47,14 @@ describe("PQC / Identity", () => {
     const id = await createIdentity("user1", "email", "test@test.com");
     const bundle = await getPublicKeyBundle();
 
-    // Bundle is base64
+    // Bundle is base64 and structure should match X3DH
     expect(bundle.userId).toBe("user1");
-    expect(bundle.kemPublicKey).toBeTruthy();
-    expect(typeof bundle.kemPublicKey).toBe("string");
+    expect(bundle.identityKey).toBeTruthy();
+    expect(bundle.signedPreKey).toBeDefined();
+    expect(bundle.signedPreKey.key).toBeTruthy();
+    expect(bundle.signedPreKey.signature).toBeTruthy();
+    expect(bundle.oneTimePreKey).toBeDefined(); // Should have one since we generate 50
+    expect(bundle.oneTimePreKey!.key).toBeTruthy();
   });
 
   it("should perform KEM encapsulation/decapsulation correctly", async () => {

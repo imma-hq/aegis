@@ -5,9 +5,10 @@ import {
   encryptMessage,
   decryptMessage,
 } from "../src/session";
-import { createIdentity } from "../src/pqc";
+import { createIdentity, getPublicKeyBundle } from "../src/pqc";
 import { Aegis } from "../src/config";
 import { MockStorage } from "./setup";
+import { bytesToBase64 } from "../src/crypto";
 
 describe("Session & Double Ratchet", () => {
   let aliceStorage: MockStorage;
@@ -42,14 +43,25 @@ describe("Session & Double Ratchet", () => {
     const sessionId = "session_1";
 
     // 2. Handshake
+    // Bob publishes public key bundle
+    const bobBundle = await asUser(bobStorage, () => getPublicKeyBundle());
+
     // Alice inits
     const initData = await asUser(aliceStorage, () =>
-      initializeSession(sessionId, bobId.kem.publicKey)
+      initializeSession(sessionId, bobBundle)
     );
 
     // Bob accepts
+    const bobKeys = {
+      identitySecret: bobId.kem.secretKey,
+      signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
+      oneTimePreKeySecret: bobId.oneTimePreKeys.find(
+        (k) => k.id === bobBundle.oneTimePreKey!.id
+      )?.keyPair.secretKey,
+    };
+
     await asUser(bobStorage, () =>
-      acceptSession(sessionId, initData.kemCiphertext, bobId.kem.secretKey)
+      acceptSession(sessionId, initData.ciphertexts, bobKeys)
     );
 
     // 3. Message Exchange
@@ -88,11 +100,21 @@ describe("Session & Double Ratchet", () => {
     );
 
     const sessionId = "ratchet_test";
+
+    // Handshake
+    const bobBundle = await asUser(bobStorage, () => getPublicKeyBundle());
     const initData = await asUser(aliceStorage, () =>
-      initializeSession(sessionId, bobId.kem.publicKey)
+      initializeSession(sessionId, bobBundle)
     );
+    const bobKeys = {
+      identitySecret: bobId.kem.secretKey,
+      signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
+      oneTimePreKeySecret: bobId.oneTimePreKeys.find(
+        (k) => k.id === bobBundle.oneTimePreKey!.id
+      )?.keyPair.secretKey,
+    };
     await asUser(bobStorage, () =>
-      acceptSession(sessionId, initData.kemCiphertext, bobId.kem.secretKey)
+      acceptSession(sessionId, initData.ciphertexts, bobKeys)
     );
 
     // 2. Alice sends 2 messages
@@ -129,11 +151,21 @@ describe("Session & Double Ratchet", () => {
       createIdentity("bob", "email", "b@b.com")
     );
     const sessionId = "reorder_test";
+
+    // Handshake
+    const bobBundle = await asUser(bobStorage, () => getPublicKeyBundle());
     const initData = await asUser(aliceStorage, () =>
-      initializeSession(sessionId, bobId.kem.publicKey)
+      initializeSession(sessionId, bobBundle)
     );
+    const bobKeys = {
+      identitySecret: bobId.kem.secretKey,
+      signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
+      oneTimePreKeySecret: bobId.oneTimePreKeys.find(
+        (k) => k.id === bobBundle.oneTimePreKey!.id
+      )?.keyPair.secretKey,
+    };
     await asUser(bobStorage, () =>
-      acceptSession(sessionId, initData.kemCiphertext, bobId.kem.secretKey)
+      acceptSession(sessionId, initData.ciphertexts, bobKeys)
     );
 
     // 2. Alice sends M1, M2, M3

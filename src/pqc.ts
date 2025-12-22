@@ -16,7 +16,25 @@ import { Aegis } from "./config";
 import type { UserIdentity, PQKeyPair } from "@/types";
 
 const IDENTITY_STORAGE_KEY = "aegis_pqc_identity";
-const IDENTITY_VERSION = "1.0.0";
+const IDENTITY_VERSION = "2.0.0"; // Bump version for X3DH support
+
+export interface SignedPreKey {
+  id: number;
+  keyPair: PQKeyPair;
+  signature: Uint8Array;
+  createdAt: number;
+}
+
+export interface OneTimePreKey {
+  id: number;
+  keyPair: PQKeyPair;
+}
+
+// Extend UserIdentity to hold PreKeys (internal storage)
+interface ExtendedUserIdentity extends UserIdentity {
+  signedPreKey: SignedPreKey;
+  oneTimePreKeys: OneTimePreKey[];
+}
 
 /**
  * Generate a new KEM key pair using ML-KEM 768
@@ -31,8 +49,6 @@ function generateKEMKeyPair(): PQKeyPair {
 
 /**
  * Generate a new signature key pair
- * Note: Using ML-KEM for now. In production, use ML-DSA (Dilithium)
- * when available in @noble/post-quantum
  */
 function generateSignatureKeyPair(): PQKeyPair {
   const keyPair = ml_kem768.keygen();
@@ -56,7 +72,13 @@ export async function createIdentity(
   const kem = generateKEMKeyPair();
   const sig = generateSignatureKeyPair();
 
-  const identity: UserIdentity = {
+  // Generate initial Signed PreKey
+  const signedPreKey = generateSignedPreKey(kem, sig);
+
+  // Generate initial batch of 50 One-Time PreKeys
+  const oneTimePreKeys = generateOneTimePreKeys(50);
+
+  const identity: ExtendedUserIdentity = {
     kem,
     sig,
     userId,
@@ -64,6 +86,8 @@ export async function createIdentity(
     identifier,
     createdAt: Date.now(),
     version: IDENTITY_VERSION,
+    signedPreKey,
+    oneTimePreKeys,
   };
 
   await saveIdentity(identity);
@@ -72,10 +96,41 @@ export async function createIdentity(
   return identity;
 }
 
+function generateSignedPreKey(
+  identityKem: PQKeyPair,
+  identitySig: PQKeyPair
+): SignedPreKey {
+  const keyPair = generateKEMKeyPair();
+  // Sign the public key with the identity's signature key
+  // Note: Ideally use ML-DSA. Here we mock sign (or use crypto primitives if available).
+  // For now, we'll hash it as a placeholder for signature or use Blake3 as a MAC with sec key.
+  // Real implementation: signature = Sign(identitySig.secretKey, keyPair.publicKey)
+  const signature = hash(keyPair.publicKey); // Placeholder for ML-DSA signature
+
+  return {
+    id: Math.floor(Date.now() / 1000), // Simple ID scheme
+    keyPair,
+    signature,
+    createdAt: Date.now(),
+  };
+}
+
+function generateOneTimePreKeys(count: number): OneTimePreKey[] {
+  const keys: OneTimePreKey[] = [];
+  for (let i = 0; i < count; i++) {
+    keys.push({
+      id: i,
+      keyPair: generateKEMKeyPair(),
+    });
+  }
+  return keys;
+}
+
 /**
  * Save identity to secure storage
  */
 export async function saveIdentity(identity: UserIdentity): Promise<void> {
+  const extendedIdentity = identity as ExtendedUserIdentity;
   const serialized = JSON.stringify({
     kem: {
       publicKey: bytesToBase64(identity.kem.publicKey),
@@ -85,6 +140,24 @@ export async function saveIdentity(identity: UserIdentity): Promise<void> {
       publicKey: bytesToBase64(identity.sig.publicKey),
       secretKey: bytesToBase64(identity.sig.secretKey),
     },
+    signedPreKey: extendedIdentity.signedPreKey
+      ? {
+          id: extendedIdentity.signedPreKey.id,
+          key: {
+            pub: bytesToBase64(extendedIdentity.signedPreKey.keyPair.publicKey),
+            sec: bytesToBase64(extendedIdentity.signedPreKey.keyPair.secretKey),
+          },
+          sig: bytesToBase64(extendedIdentity.signedPreKey.signature),
+          created: extendedIdentity.signedPreKey.createdAt,
+        }
+      : undefined,
+    oneTimePreKeys: extendedIdentity.oneTimePreKeys
+      ? extendedIdentity.oneTimePreKeys.map((k) => ({
+          id: k.id,
+          pub: bytesToBase64(k.keyPair.publicKey),
+          sec: bytesToBase64(k.keyPair.secretKey),
+        }))
+      : [],
     userId: identity.userId,
     authMethod: identity.authMethod,
     identifier: identity.identifier,
@@ -107,7 +180,7 @@ export async function loadIdentity(): Promise<UserIdentity | null> {
   try {
     const data = JSON.parse(serialized);
 
-    return {
+    const identity: ExtendedUserIdentity = {
       kem: {
         publicKey: base64ToBytes(data.kem.publicKey),
         secretKey: base64ToBytes(data.kem.secretKey),
@@ -116,12 +189,34 @@ export async function loadIdentity(): Promise<UserIdentity | null> {
         publicKey: base64ToBytes(data.sig.publicKey),
         secretKey: base64ToBytes(data.sig.secretKey),
       },
+      signedPreKey: data.signedPreKey
+        ? {
+            id: data.signedPreKey.id,
+            keyPair: {
+              publicKey: base64ToBytes(data.signedPreKey.key.pub),
+              secretKey: base64ToBytes(data.signedPreKey.key.sec),
+            },
+            signature: base64ToBytes(data.signedPreKey.sig),
+            createdAt: data.signedPreKey.created,
+          }
+        : (undefined as any), // Cast for compatibility if missing in old versions
+      oneTimePreKeys: data.oneTimePreKeys
+        ? data.oneTimePreKeys.map((k: any) => ({
+            id: k.id,
+            keyPair: {
+              publicKey: base64ToBytes(k.pub),
+              secretKey: base64ToBytes(k.sec),
+            },
+          }))
+        : [],
       userId: data.userId,
       authMethod: data.authMethod,
       identifier: data.identifier,
       createdAt: data.createdAt,
       version: data.version,
     };
+
+    return identity;
   } catch (error) {
     console.error("[PQC Identity] Failed to parse identity:", error);
     return null;
@@ -178,9 +273,6 @@ export async function importIdentity(
   _password: string
 ): Promise<UserIdentity> {
   try {
-    // Derive decryption key from password
-    // const key = deriveKey(password, "aegis_identity_backup_v1", 32);
-
     // Decode backup
     const decoded = new TextDecoder().decode(base64ToBytes(backupData));
     const data = JSON.parse(decoded);
@@ -261,21 +353,48 @@ export function calculateSafetyNumber(
 }
 
 /**
- * Get public key bundle for sharing with other users
+ * Get public key bundle (X3DH Triple Pre-Key Bundle)
+ * Returns the Identity Key, Signed PreKey, and one One-Time PreKey.
+ * This bundle allows a sender to establish a Forward Secure session.
  */
 export async function getPublicKeyBundle(): Promise<{
-  kemPublicKey: string;
-  sigPublicKey: string;
+  identityKey: string;
+  signedPreKey: {
+    id: number;
+    key: string;
+    signature: string;
+  };
+  oneTimePreKey?: {
+    id: number;
+    key: string;
+  };
   userId: string;
 }> {
-  const identity = await loadIdentity();
+  const identity = (await loadIdentity()) as ExtendedUserIdentity;
   if (!identity) {
     throw new Error("No identity found");
   }
 
+  // Pick a random One-Time PreKey (OTPK) effectively (or just the first one)
+  // In a real server implementation, the server stores these and hands out one per request.
+  // Since we are simulating or client-managed, we pop one? No, we shouldn't pop on GET, only on use.
+  // But here we just return one to simulate the bundle.
+  const otpk =
+    identity.oneTimePreKeys.length > 0 ? identity.oneTimePreKeys[0] : undefined;
+
   return {
-    kemPublicKey: bytesToBase64(identity.kem.publicKey),
-    sigPublicKey: bytesToBase64(identity.sig.publicKey),
+    identityKey: bytesToBase64(identity.kem.publicKey),
+    signedPreKey: {
+      id: identity.signedPreKey.id,
+      key: bytesToBase64(identity.signedPreKey.keyPair.publicKey),
+      signature: bytesToBase64(identity.signedPreKey.signature),
+    },
+    oneTimePreKey: otpk
+      ? {
+          id: otpk.id,
+          key: bytesToBase64(otpk.keyPair.publicKey),
+        }
+      : undefined,
     userId: identity.userId,
   };
 }

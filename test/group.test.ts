@@ -1,19 +1,22 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { sendGroupMessage, decryptGroupMessage } from "../src/group";
-import { initializeSession, acceptSession } from "../src/session";
-import { createIdentity } from "../src/pqc";
+import { GroupSession } from "../src/group";
+import {
+  initializeSession,
+  acceptSession,
+  encryptMessage,
+  decryptMessage,
+} from "../src/session";
+import { createIdentity, getPublicKeyBundle } from "../src/pqc";
 import { Aegis } from "../src/config";
 import { MockStorage } from "./setup";
 
-describe("Group Messaging", () => {
+describe("Sender Key Group Messaging", () => {
   let aliceStorage: MockStorage;
   let bobStorage: MockStorage;
-  let charlieStorage: MockStorage;
 
   beforeEach(() => {
     aliceStorage = new MockStorage();
     bobStorage = new MockStorage();
-    charlieStorage = new MockStorage();
   });
 
   async function asUser<T>(
@@ -24,7 +27,7 @@ describe("Group Messaging", () => {
     return fn();
   }
 
-  it("should broadcast a message to multiple recipients", async () => {
+  it("should distribute sender keys and exchange messages", async () => {
     // 1. Identities
     const aliceId = await asUser(aliceStorage, () =>
       createIdentity("alice", "email", "alice@test.com")
@@ -32,56 +35,59 @@ describe("Group Messaging", () => {
     const bobId = await asUser(bobStorage, () =>
       createIdentity("bob", "email", "bob@test.com")
     );
-    const charlieId = await asUser(charlieStorage, () =>
-      createIdentity("charlie", "email", "charlie@test.com")
-    );
 
-    // 2. Establish Sessions
-    // Alice -> Bob
+    // 2. Establish 1:1 Session (for Key Distribution)
     const sidAB = "session_ab";
+    const bobBundle = await asUser(bobStorage, () => getPublicKeyBundle());
+
     const initAB = await asUser(aliceStorage, () =>
-      initializeSession(sidAB, bobId.kem.publicKey)
-    );
-    await asUser(bobStorage, () =>
-      acceptSession(sidAB, initAB.kemCiphertext, bobId.kem.secretKey)
+      initializeSession(sidAB, bobBundle)
     );
 
-    // Alice -> Charlie
-    const sidAC = "session_ac";
-    const initAC = await asUser(aliceStorage, () =>
-      initializeSession(sidAC, charlieId.kem.publicKey)
-    );
-    await asUser(charlieStorage, () =>
-      acceptSession(sidAC, initAC.kemCiphertext, charlieId.kem.secretKey)
-    );
-
-    // 3. Send Group Message
-    const groupId = "group_1";
-    const plaintext = "Hello Team";
-    const participants = {
-      [bobId.userId]: sidAB,
-      [charlieId.userId]: sidAC,
+    const bobKeys = {
+      identitySecret: bobId.kem.secretKey,
+      signedPreKeySecret: bobId.signedPreKey!.keyPair.secretKey,
+      oneTimePreKeySecret: bobId.oneTimePreKeys.find(
+        (k) => k.id === bobBundle.oneTimePreKey!.id
+      )?.keyPair.secretKey,
     };
-
-    const bundle = await asUser(aliceStorage, () =>
-      sendGroupMessage(groupId, participants, plaintext)
+    await asUser(bobStorage, () =>
+      acceptSession(sidAB, initAB.ciphertexts, bobKeys)
     );
 
-    expect(bundle.groupId).toBe(groupId);
-    expect(bundle.messages[bobId.userId]).toBeDefined();
-    expect(bundle.messages[charlieId.userId]).toBeDefined();
+    // 3. Alice creates group and distributes key
+    const groupId = "group_alpha";
+    const distMsg = await asUser(aliceStorage, async () => {
+      const group = await GroupSession.get(groupId);
+      return group.createDistributionMessage(aliceId.userId);
+    });
 
-    // 4. Decrypt
-    // Bob receives
-    const decBob = await asUser(bobStorage, () =>
-      decryptGroupMessage(bundle.messages[bobId.userId])
+    // Transport: Alice encrypts distMsg for Bob
+    const encDist = await asUser(aliceStorage, () =>
+      encryptMessage(sidAB, JSON.stringify(distMsg))
     );
-    expect(decBob).toBe(plaintext);
 
-    // Charlie receives
-    const decCharlie = await asUser(charlieStorage, () =>
-      decryptGroupMessage(bundle.messages[charlieId.userId])
-    );
-    expect(decCharlie).toBe(plaintext);
+    // Transport: Bob receives and processes
+    await asUser(bobStorage, async () => {
+      const plainDist = await decryptMessage(encDist);
+      const payload = JSON.parse(plainDist);
+      const group = await GroupSession.get(groupId);
+      await group.processDistributionMessage(payload);
+    });
+
+    // 4. Alice Broadcasts (Sender Key Encryption)
+    const plaintext = "Hello Scalable World";
+    const groupCipher = await asUser(aliceStorage, async () => {
+      const group = await GroupSession.get(groupId);
+      return group.encrypt(plaintext, aliceId.userId);
+    });
+
+    // 5. Bob Decrypts (using stored sender key)
+    const bobDecrypted = await asUser(bobStorage, async () => {
+      const group = await GroupSession.get(groupId);
+      return group.decrypt(groupCipher);
+    });
+
+    expect(bobDecrypted).toBe(plaintext);
   });
 });

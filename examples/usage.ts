@@ -1,124 +1,99 @@
-import {
-  Aegis,
-  createIdentity,
-  getPublicKeyBundle,
-  initializeSession,
-  acceptSession,
-  encryptMessage,
-  decryptMessage,
-  sendGroupMessage,
-  StorageAdapter,
-} from "../dist/";
+```typescript
+import { Aegis } from "../dist"; // Using built files for example
+import { getPublicKeyBundle, createIdentity } from "../dist/pqc";
+import { initializeSession, acceptSession, encryptMessage, decryptMessage } from "../dist/session";
+import { getGroupSession } from "../dist/group";
+import { getStorage } from "../dist/index"; // Assuming this is exposed or via Aegis.init
 
-// 1. Implement In-Memory Storage Adapter for testing/examples
-const memoryStorage = new Map<string, string>();
-
-const mockStorage: StorageAdapter = {
-  async setItem(key: string, value: string) {
-    memoryStorage.set(key, value);
-  },
-  async getItem(key: string) {
-    return memoryStorage.get(key) || null;
-  },
-  async removeItem(key: string) {
-    memoryStorage.delete(key);
-  },
-};
-
-// Initialize Aegis
-Aegis.init({ storage: mockStorage });
-
-async function main() {
-  console.log("=== Aegis E2E Encryption Example ===\n");
-
-  // 1. Create Identities
-  console.log("1. Creating Identities...");
-  const alice = await createIdentity("alice", "email", "alice@example.com");
-  const bob = await createIdentity("bob", "email", "bob@example.com");
-  const charlie = await createIdentity(
-    "charlie",
-    "email",
-    "charlie@example.com"
-  );
-
-  // 2. Setup 1:1 Session (Alice -> Bob)
-  console.log("\n2. Establishing 1:1 Session (Alice -> Bob)...");
-
-  // Bob publishes his public keys
-  const bobBundle = await getPublicKeyBundle();
-
-  // Alice initiates session (Alice's view)
-  const aliceSessionId = "session_alice_to_bob";
-  const initData = await initializeSession(aliceSessionId, bob.kem.publicKey);
-
-  // Bob accepts session (Bob's view)
-  const bobSessionId = "session_bob_from_alice";
-  await acceptSession(bobSessionId, initData.kemCiphertext, bob.kem.secretKey);
-
-  // 3. 1:1 Messaging
-  console.log("\n3. Testing 1:1 Messaging...");
-  const msg1 = "Hello Bob, this is Alice!";
-  console.log(`Alice sends: "${msg1}"`);
-
-  const encrypted1 = await encryptMessage(aliceSessionId, msg1);
-  console.log(`Encrypted: ${encrypted1.ciphertext.substring(0, 20)}...`);
-
-  // Bob decrypts (must use his local session ID)
-  // We simulate transport layer delivering message to "Bob's Session"
-  const decrypted1 = await decryptMessage({
-    ...encrypted1,
-    sessionId: bobSessionId,
-  });
-  console.log(`Bob receives: "${decrypted1}"`);
-
-  // 4. Setup Session (Alice -> Charlie) for Group
-  console.log("\n4. Establishing Session (Alice -> Charlie) for Group...");
-  const aliceToCharlieId = "session_alice_charlie";
-  const charlieToAliceId = "session_charlie_alice";
-
-  const initDataAC = await initializeSession(
-    aliceToCharlieId,
-    charlie.kem.publicKey
-  );
-
-  await acceptSession(
-    charlieToAliceId,
-    initDataAC.kemCiphertext,
-    charlie.kem.secretKey
-  );
-
-  // 5. Group Messaging (Alice -> [Bob, Charlie])
-  console.log("\n5. Testing Group Messaging (Fan-out)...");
-  const groupMsg = "Hello Team! Secure update here.";
-  const groupId = "group_1";
-
-  const participants = {
-    [bob.userId]: aliceSessionId,
-    [charlie.userId]: aliceToCharlieId,
-  };
-
-  console.log(`Alice broadcasts to group ${groupId}: "${groupMsg}"`);
-  const bundle = await sendGroupMessage(groupId, participants, groupMsg);
-
-  // Bob decrypts his copy
-  const bobCopy = bundle.messages[bob.userId];
-  if (bobCopy) {
-    const bobDecrypted = await decryptMessage({
-      ...bobCopy,
-      sessionId: bobSessionId,
-    });
-    console.log(`Bob receives group msg: "${bobDecrypted}"`);
-  }
-
-  // Charlie decrypts his copy
-  const charlieCopy = bundle.messages[charlie.userId];
-  if (charlieCopy) {
-    const charlieDecrypted = await decryptMessage({
-      ...charlieCopy,
-      sessionId: charlieToAliceId,
-    });
-    console.log(`Charlie receives group msg: "${charlieDecrypted}"`);
-  }
+// Mock Storage Adapter (In-Memory)
+class MockStorage {
+  private store: Map<string, string> = new Map();
+  async getItem(key: string) { return this.store.get(key) || null; }
+  async setItem(key: string, value: string) { this.store.set(key, value); }
+  async removeItem(key: string) { this.store.delete(key); }
+  async clear() { this.store.clear(); }
 }
 
-main().catch(console.error);
+async function runExample() {
+  console.log("=== Aegis: Secure Messaging Demo (PQC X3DH + Sender Keys) ===\n");
+
+  // 1. Initialize Library
+  const aliceStorage = new MockStorage();
+  const bobStorage = new MockStorage();
+  
+  // We need to switch context for each user since current implementation
+  // is a singleton `Aegis.init`. In a real app, strict separation or
+  // instance-based architecture would be used.
+  // Helper to switch context:
+  const asAlice = () => Aegis.init({ storage: aliceStorage });
+  const asBob = () => Aegis.init({ storage: bobStorage });
+
+  // 2. Identity Creation (Bob)
+  asBob();
+  const bobIdentity = await createIdentity("bob_123", "email", "bob@example.com");
+  const bobBundle = await getPublicKeyBundle(); // Bob publishes this to server
+  console.log("Bob Identity Created. EK Public:", bobBundle.identityKey.substring(0, 10) + "...");
+
+  // 3. Session Establish (Alice -> Bob)
+  asAlice();
+  await createIdentity("alice_456", "phone", "+15550000");
+  console.log("Alice Identity Created.");
+
+  const sessionInit = await initializeSession("session_a_b", bobBundle);
+  console.log("Alice initialized session. Sending bundle...");
+
+  // 4. Accept Session (Bob)
+  asBob();
+  // Bob fetches his own keys to decrypt
+  const bobKeys = {
+      identitySecret: bobIdentity.kem.secretKey, // In reality, load from storage
+      signedPreKeySecret: bobIdentity.signedPreKey!.keyPair.secretKey, // ! bang for demo
+      oneTimePreKeySecret: bobBundle.oneTimePreKey ? 
+         bobIdentity.oneTimePreKeys.find(k => k.id === bobBundle.oneTimePreKey!.id)?.keyPair.secretKey : undefined
+  };
+  await acceptSession("session_a_b", sessionInit.ciphertexts, bobKeys);
+
+  // 5. 1:1 Messaging
+  asAlice();
+  const msg1 = await encryptMessage("session_a_b", "Hello Bob, this is Alice!");
+  console.log("Alice Sent (1:1):", msg1.ciphertext.substring(0, 10) + "...");
+
+  asBob();
+  const plain1 = await decryptMessage("session_a_b", msg1);
+  console.log("Bob Received (1:1):", plain1);
+
+  // 6. Group Messaging (Sender Keys)
+  console.log("\n--- Group Messaging (Sender Keys) ---");
+  const groupId = "group_cool_people";
+
+  // Alice initializes group
+  asAlice();
+  const aliceGroup = await getGroupSession(groupId);
+  // Create distribution message for Bob
+  const distMsg = aliceGroup.createDistributionMessage("alice_456");
+  
+  // Alice sends this dist session via 1:1 to Bob
+  const encryptedDist = await encryptMessage("session_a_b", JSON.stringify(distMsg));
+
+  // Bob receives and processes
+  asBob();
+  const decryptedDistStr = await decryptMessage("session_a_b", encryptedDist);
+  const receivedDistMsg = JSON.parse(decryptedDistStr);
+  const bobGroup = await getGroupSession(groupId);
+  await bobGroup.processDistributionMessage(receivedDistMsg);
+
+  // Alice broadcasts to group
+  asAlice();
+  const groupCipher = await aliceGroup.encrypt("Hello Group! Scaling to millions!", "alice_456");
+  console.log("Alice Broadcast:", groupCipher.cipherText.substring(0, 10) + "...");
+
+  // Bob reads broadcast
+  asBob();
+  const groupPlain = await bobGroup.decrypt(groupCipher);
+  console.log("Bob Read Group Msg:", groupPlain);
+
+  console.log("\n=== Demo Complete ===");
+}
+
+runExample().catch(console.error);
+```

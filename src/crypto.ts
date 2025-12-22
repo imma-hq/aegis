@@ -260,3 +260,11 @@ export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
 
   return result === 0;
 }
+
+/**
+ * Zero out a buffer to clear sensitive data from memory (Best Effort)
+ * Note: In JS, garbage collection might move memory, so this is not a guarantee.
+ */
+export function zeroBuffer(buffer: Uint8Array): void {
+  buffer.fill(0);
+}
