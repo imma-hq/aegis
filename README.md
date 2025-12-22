@@ -16,12 +16,10 @@ It provides robust security for messaging applications by combining modern class
 ## Installation
 
 ```bash
-npm install aegis-crypto
+npm install @immahq/aegis
 # or
-yarn add aegis-crypto
+yarn add @immahq/aegis
 ```
-
-_(Note: Replace `aegis-crypto` with the actual package name if different)_
 
 ## Quick Start
 
@@ -30,7 +28,7 @@ _(Note: Replace `aegis-crypto` with the actual package name if different)_
 Aegis needs to persist keys and session state but doesn't dictate how. You must implement the `StorageAdapter` interface.
 
 ```typescript
-import { Aegis, StorageAdapter } from "aegis-crypto";
+import { Aegis, StorageAdapter } from "@immahq/aegis";
 
 // Example using a simple in-memory Map (for testing)
 // In production, use AsyncStorage, SQLite, or similar.
@@ -55,7 +53,7 @@ Aegis.init({ storage: myStorage });
 Each user needs an identity consisting of KEM (Key Encapsulation) and Signing keys.
 
 ```typescript
-import { createIdentity } from "aegis-crypto";
+import { createIdentity } from "@immahq/aegis";
 
 const myIdentity = await createIdentity(
   "alice_user_id",
@@ -72,7 +70,7 @@ To chat with another user, you must perform an initial secure handshake.
 **Initiator (Alice):**
 
 ```typescript
-import { initializeSession } from "aegis-crypto";
+import { initializeSession } from "@immahq/aegis";
 
 // 1. Fetch Bob's public key (from your server)
 const bobPublicKey = ...;
@@ -86,7 +84,7 @@ const sessionData = await initializeSession("session_id_123", bobPublicKey);
 **Recipient (Bob):**
 
 ```typescript
-import { acceptSession } from "aegis-crypto";
+import { acceptSession } from "@immahq/aegis";
 
 // 1. Receive ciphertext from Alice
 const kemCiphertext = ...;
@@ -100,7 +98,7 @@ await acceptSession("session_id_123", kemCiphertext, myIdentity.kem.secretKey);
 Once the session is established, both parties can send and receive encrypted messages.
 
 ```typescript
-import { encryptMessage, decryptMessage } from "aegis-crypto";
+import { encryptMessage, decryptMessage } from "@immahq/aegis";
 
 // Sending (Encryption)
 const encryptedMsg = await encryptMessage("session_id_123", "Hello World!");
@@ -116,7 +114,7 @@ console.log(plaintext); // "Hello World!"
 Aegis supports group messaging via "client-side fan-out". This means the sender encrypts the message individually for every group member using their respective 1:1 sessions.
 
 ```typescript
-import { sendGroupMessage } from "aegis-crypto";
+import { sendGroupMessage } from "@immahq/aegis";
 
 // Map of UserID -> SessionID
 const participants = {
@@ -133,32 +131,6 @@ const bundle = await sendGroupMessage(
 // `bundle` contains a map of encrypted messages:
 // bundle.messages["bob_id"] -> encrypted for Bob
 // bundle.messages["charlie_id"] -> encrypted for Charlie
-```
-
-## Contributing
-
-We welcome contributions!
-
-### Setup
-
-```bash
-git clone https://github.com/your-org/aegis.git
-cd aegis
-npm install
-```
-
-### Build
-
-```bash
-npm run build
-```
-
-### Run Examples
-
-To verify changes and understand the flow, run the usage example:
-
-```bash
-npm run example
 ```
 
 ## License

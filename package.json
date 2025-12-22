@@ -1,5 +1,5 @@
 {
-  "name": "aegis",
+  "name": "@immahq/aegis",
   "version": "0.0.1",
   "description": "E2E with PQC",
   "main": "./dist/index.js",
@@ -12,24 +12,43 @@
       "import": "./dist/index.mjs"
     }
   },
+  "scope": "immahq",
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
-    "example": "tsx examples/usage.ts"
+    "example": "tsx examples/usage.ts",
+    "test": "vitest"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/imma-hq/aegis.git"
+  },
+  "keywords": [
+    "react",
+    "react native",
+    "native",
+    "select",
+    "dropdown",
+    "option"
+  ],
+  "author": "Aegis",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/imma-hq/aegis/issues"
+  },
+  "homepage": "https://github.com/imma-hq/aegis#readme",
   "dependencies": {
     "@noble/ciphers": "^2.0.1",
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
     "@noble/post-quantum": "^0.5.2"
   },
-  "author": "Aegis",
-  "license": "MIT",
   "devDependencies": {
     "tsup": "^8.3.5",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.16"
   }
 }
