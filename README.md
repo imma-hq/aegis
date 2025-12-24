@@ -1,237 +1,217 @@
-# Aegis
+# **Aegis** – Storage-Agnostic, Post-Quantum Cryptography (PQC) Ready E2E Encryption Library
 
-**Aegis** is a storage-agnostic, Post-Quantum Cryptography (PQC) ready End-to-End (E2E) encryption library.
-
-It combines ML-KEM (Kyber-like KEM) for key agreement and modern symmetric primitives (ChaCha20-Poly1305, Blake3) to provide secure 1:1 sessions and scalable client-side group encryption.
-
-This README gives an overview, a compact API reference, and clear sample usage for common flows.
+**Aegis** is a lightweight, storage-agnostic library for client-side End-to-End (E2E) encryption, designed for future security. It combines the NIST-standardized ML-KEM 768 algorithm for quantum-resistant key agreement with high-performance symmetric cryptography (ChaCha20-Poly1305, Blake3) to provide secure 1:1 sessions and scalable group messaging.
 
 ---
+## **Core Features**
 
-## Features
-
-- Storage-agnostic: you supply the storage adapter (AsyncStorage, LocalStorage, SQLite, in-memory, etc.).
-- Post-quantum KEM for initial key agreement (ML-KEM 768).
-- Symmetric ratchets for forward secrecy (ChaCha20-Poly1305 + Blake3).
-- Sender-key based group messaging for O(1) broadcast encryption.
-- Minimal runtime dependencies.
+- **Post-Quantum Ready**: Uses **ML-KEM 768 (formerly Kyber)** for initial key encapsulation, aligning with NIST standards.
+- **Storage-Agnostic**: You provide a simple key-value storage adapter (e.g., AsyncStorage, LocalStorage, SQLite).
+- **Modern Cryptography**: Symmetric ratchets for forward secrecy and Sender Keys for O(1) group encryption.
+- **Minimal Dependencies**: Relies on robust, well-audited libraries like `@noble/curves` and `@noble/hashes`.
 
 ---
+## **Installation**
 
-## Installation
-
-```/dev/null/install.md#L1-6
-# Using npm
+Install the library using npm or yarn.
+```bash
 npm install @immahq/aegis
-
-# or with yarn
+# or
 yarn add @immahq/aegis
 ```
 
 ---
+## **Quick Start**
 
-## Quick Start (essential flows)
+### **1. Implement a Storage Adapter**
+Aegis requires a minimal async storage adapter to persist keys and session state.
+```typescript
+import { StorageAdapter } from '@immahq/aegis';
 
-### 1) Implement a Storage Adapter
-
-Aegis requires a minimal async key-value storage adapter:
-
-```/dev/null/storage.example.ts#L1-14
-// StorageAdapter
 const myStorage: StorageAdapter = {
-  async setItem(key: string, value: string) {
-    await db.save(key, value);
-  },
-  async getItem(key: string) {
-    return await db.get(key);
-  },
-  async removeItem(key: string) {
-    await db.delete(key);
-  },
+  async setItem(key: string, value: string) { /* Save to secure storage */ },
+  async getItem(key: string): Promise<string | null> { /* Retrieve from storage */ },
+  async removeItem(key: string) { /* Delete from storage */ },
 };
 
+// Initialize the library before any other operation
+import { Aegis } from '@immahq/aegis';
 Aegis.init({ storage: myStorage });
 ```
+> **Security Note**: The adapter will store secret key material. In production, always use platform-secured storage (e.g., iOS Keychain, Android Keystore, or a securely encrypted database).
 
-> Security note: The adapter will persist secret material (e.g., private keys and chain keys). In production use secure storage (Keychain, Keystore, secure enclave).
+### **2. Create a User Identity**
+A user identity consists of a post-quantum KEM key pair, a signing key pair, and pre-keys for session establishment.
+```typescript
+import { createIdentity } from '@immahq/aegis';
 
----
-
-### 2) Identity (PQC keys & pre-keys)
-
-```/dev/null/identity.example.ts#L1-12
-// Create and persist an identity (KEM + signature keys + prekeys)
-const myIdentity = await createIdentity("alice_user_id", "email", "alice@example.com");
-// Identity is persisted to your StorageAdapter
+// This creates and automatically saves the identity to your storage
+const myIdentity = await createIdentity(
+  "alice_user_id",
+  "email",
+  "alice@example.com"
+);
 ```
 
-You can export/import a backup bundle:
+### **3. Establish a 1:1 Encrypted Session**
+#### **Initiator (Alice)**
+```typescript
+import { initializeSession } from '@immahq/aegis';
 
-```/dev/null/identity-backup.example.ts#L1-8
-const backup = await exportIdentity("strong-password");
-// Later...
-const restored = await importIdentity(backup, "strong-password");
-```
-
-> Note: `exportIdentity()` now returns a password-encrypted backup (base64-encoded JSON envelope with fields `salt`, `nonce`, and `ciphertext`) using a Blake3-based KDF + ChaCha20-Poly1305. For production use, prefer a slow, memory-hard KDF such as Argon2 or scrypt and ensure backup integrity before restoring.
- 
-Server note: If you manage One-Time PreKeys on the server, use `getAndConsumePublicKeyBundle()` to hand out a bundle while marking the OTPK as consumed so it cannot be reused. The `getPublicKeyBundle()` response also includes the identity signing key as `sigPublicKey`, which can be used to verify Signed PreKey signatures.
-
----
-
-### 3) Establish a 1:1 Session (Initiator / Recipient)
-
-Initiator (Alice):
-
-```/dev/null/session-init.example.ts#L1-12
-// Alice fetches Bob's public bundle from your server
+// 1. Fetch recipient's public bundle from your server
 const bobBundle = await getPublicKeyBundle(); // { identityKey, signedPreKey, oneTimePreKey?, userId }
+
+// 2. Initialize a session. This performs the ML-KEM key encapsulation.
 const initData = await initializeSession("session_alice_bob", bobBundle);
-// send initData.ciphertexts to Bob via your server
+
+// 3. Send `initData.ciphertexts` to Bob via your server
 ```
 
-Recipient (Bob):
+#### **Recipient (Bob)**
+```typescript
+import { acceptSession } from '@immahq/aegis';
+import { loadIdentity } from '@immahq/aegis';
 
-```/dev/null/session-accept.example.ts#L1-12
-// Bob receives ciphertexts; he uses his private keys to accept session
+// 1. Load local identity to access secret keys
+const bobIdentity = await loadIdentity();
+if (!bobIdentity) throw new Error("Identity not found");
+
+// 2. Accept the session using the received ciphertexts and secret keys
 await acceptSession("session_alice_bob", initData.ciphertexts, {
   identitySecret: bobIdentity.kem.secretKey,
   signedPreKeySecret: bobIdentity.signedPreKey!.keyPair.secretKey,
-  oneTimePreKeySecret: bobIdentity.oneTimePreKeys.find(k => k.id === bobBundle.oneTimePreKey!.id)?.keyPair.secretKey, // optional
+  // Include if an OTPK was used:
+  oneTimePreKeySecret: bobIdentity.oneTimePreKeys.find(k => k.id === bobBundle.oneTimePreKey!.id)?.keyPair.secretKey,
 });
 ```
 
----
+### **4. Exchange Messages**
+#### **Encrypt a Message**
+```typescript
+import { encryptMessage } from '@immahq/aegis';
 
-### 4) Encrypt & Decrypt Messages
-
-```/dev/null/messages.example.ts#L1-12
-// Alice
-const encrypted = await encryptMessage("session_alice_bob", "Hello Bob!");
-
-// Bob receives
-const plaintext = await decryptMessage(encrypted);
+const encryptedMessage = await encryptMessage(
+  "session_alice_bob",
+  "Hello, Bob! This is a secret."
+);
+// encryptedMessage = { sessionId, ciphertext, nonce, messageNumber, timestamp, ... }
 ```
 
-- `encryptMessage` returns an object `{ sessionId, ciphertext, nonce, messageNumber, timestamp }`.
-- `decryptMessage` expects that object and returns the plaintext string.
+#### **Decrypt a Message**
+```typescript
+import { decryptMessage } from '@immahq/aegis';
 
----
+// Assume `receivedMsg` is the object received over the network
+const plaintext = await decryptMessage(receivedMsg);
+console.log(plaintext); // "Hello, Bob! This is a secret."
+```
 
-### 5) Group Messaging (Sender Keys)
+### **5. Group Messaging with Sender Keys**
+Aegis uses the Sender Key protocol for efficient group messaging, where each member encrypts a message once for the entire group.
 
-- Each group member has a `SenderKey` (chain key).
-- The sender privately distributes a `SenderKeyDistributionMessage` to group members (via 1:1 session). Members store the chain key and can O(1) decrypt sender broadcasts.
+#### **Create a Group and Distribute Keys**
+```typescript
+import { getGroupSession } from '@immahq/aegis';
 
-Example flow:
+// Alice creates/loads a group session
+const aliceGroup = await getGroupSession("family_chat_2025");
 
-```/dev/null/group.example.ts#L1-24
-// Alice creates/loads group
-const aliceGroup = await getGroupSession("group_chat");
+// Create a distribution message for Bob
+const distMsgForBob = aliceGroup.createDistributionMessage("alice_user_id");
 
-// Alice creates a distribution message and sends it to Bob (via secure 1:1)
-const distMsg = aliceGroup.createDistributionMessage("alice_user_id");
-// Alice encrypts distMsg using 1:1 session to Bob and sends it
+// CRITICAL: Send `distMsgForBob` to Bob via your existing SECURE 1:1 session.
+// e.g., await encryptMessage("session_alice_bob", JSON.stringify(distMsgForBob));
+```
 
-// Bob receives and processes the distribution message (after decrypting the 1:1 transport)
-const bobGroup = await getGroupSession("group_chat");
-await bobGroup.processDistributionMessage(decodedDistMsg);
+#### **Process a Received Distribution Message**
+```typescript
+// Bob loads the same group session
+const bobGroup = await getGroupSession("family_chat_2025");
 
-// Alice broadcasts to group (one encryption)
-const groupCipher = await aliceGroup.encrypt("Hello Group!", "alice_user_id");
+// First, decrypt the 1:1 message from Alice to get the distribution payload
+// const distributionPayload = JSON.parse(await decryptMessage(encryptedDistMsg));
 
-// Bob decrypts
-const plaintext = await bobGroup.decrypt(groupCipher);
+// Then, process it to store Alice's sender key
+await bobGroup.processDistributionMessage(distributionPayload);
+```
+
+#### **Broadcast and Decrypt Group Messages**
+```typescript
+// Alice encrypts a message for the entire group (O(1) operation)
+const groupCiphertext = await aliceGroup.encrypt("Dinner at 8 PM!", "alice_user_id");
+
+// Send `groupCiphertext` to all group members via your server
+
+// Bob decrypts the group message using the stored sender key
+const groupPlaintext = await bobGroup.decrypt(groupCiphertext);
+console.log(groupPlaintext); // "Dinner at 8 PM!"
 ```
 
 ---
+## **API Reference**
 
-## API Reference
+### **Core & Configuration**
+- **`Aegis.init(config: { storage: StorageAdapter })`**: Initializes the library. Must be called first.
+- **`Aegis.getStorage(): StorageAdapter`**: Returns the configured storage adapter.
 
-High-level exported functions:
+### **Identity Management**
+- **`createIdentity(userId, authMethod, identifier): Promise<UserIdentity>`**
+- **`loadIdentity(): Promise<UserIdentity | null>`**
+- **`saveIdentity(identity): Promise<void>`**
+- **`deleteIdentity(): Promise<void>`**
+- **`exportIdentity(password): Promise<string>`**
+- **`importIdentity(backupData, password): Promise<UserIdentity>`**
+- **`getPublicKeyBundle()`**: Returns `{ identityKey, signedPreKey, oneTimePreKey?, userId, sigPublicKey }`
+- **`getAndConsumePublicKeyBundle()`**: Returns a bundle and removes the used OTPK from storage.
 
-- `Aegis.init({ storage: StorageAdapter })` — initialize with your storage adapter.
-- `Aegis.getStorage()` — access the configured storage adapter.
+### **1:1 Sessions**
+- **`initializeSession(sessionId, recipientBundle): Promise<SessionInitData>`**
+- **`acceptSession(sessionId, ciphertexts, secretKeys): Promise<void>`**
+- **`encryptMessage(sessionId, plaintext): Promise<EncryptedMessage>`**
+- **`decryptMessage(encryptedMsg): Promise<string>`**
+- **`deleteSession(sessionId): Promise<void>`**
+- **`getSessionInfo(sessionId): Promise<{createdAt, lastUsed, messagesSent} | null>`**
 
-Identity management:
-
-- `createIdentity(userId, authMethod, identifier): Promise<UserIdentity>`
-- `loadIdentity(): Promise<UserIdentity | null>`
-- `saveIdentity(identity): Promise<void>`
-- `deleteIdentity(): Promise<void>`
-- `exportIdentity(password): Promise<string>`
-- `importIdentity(backupData, password): Promise<UserIdentity>`
-- `getPublicKeyBundle(): Promise<{ identityKey, signedPreKey, oneTimePreKey?, userId }>` — used by initiators to form session handshakes.
-
-Session (1:1):
-
-- `initializeSession(sessionId, recipientBundle): Promise<{ sessionId, ciphertexts }>`
-- `acceptSession(sessionId, ciphertexts, keys): Promise<void>`
-- `encryptMessage(sessionId, plaintext): Promise<EncryptedMessage>`
-- `decryptMessage(encryptedMsg): Promise<string>`
-- `getSessionInfo(sessionId): Promise<{createdAt, lastUsed, messagesSent} | null>`
-- `deleteSession(sessionId): Promise<void>`
-
-Group:
-
-- `getGroupSession(groupId): Promise<GroupSession>`
-  - `GroupSession.createDistributionMessage(senderId)`
-  - `GroupSession.processDistributionMessage(payload)`
-  - `GroupSession.encrypt(plaintext, myUserId)`
-  - `GroupSession.decrypt(senderKeyMessage)`
-
-Types:
-- `StorageAdapter` - `{ setItem(key,value):Promise<void>, getItem(key):Promise<string|null>, removeItem(key):Promise<void> }`
-- `UserIdentity`, `PQKeyPair`, `SenderKeyMessage`, etc. are exported in the package typings.
+### **Group Sessions**
+- **`getGroupSession(groupId): Promise<GroupSession>`**
+  - **`GroupSession.createDistributionMessage(senderId): SenderKeyDistributionMessage`**
+  - **`GroupSession.processDistributionMessage(payload): Promise<void>`**
+  - **`GroupSession.encrypt(plaintext, senderId): Promise<SenderKeyMessage>`**
+  - **`GroupSession.decrypt(msg): Promise<string>`**
 
 ---
+## **Testing and Examples**
 
-## Testing, Example & Scripts
-
-- Run tests:
-```/dev/null/test-run.md#L1-2
-npm test
-```
-
-- Run the sample usage (demo):
-```/dev/null/sample-run.md#L1-2
-npm run sample
-```
-The `examples/usage.ts` demonstrates the full flow (identity creation, session handshake, 1:1 messaging, group distribution). See `examples/usage.ts` for a working reference.
+- **Run Tests**: `npm test`
+- **Run Sample Flow**: `npm run sample`
+  - This executes `examples/usage.ts`, demonstrating a complete flow: identity creation, session handshake, 1:1 messaging, and group setup.
 
 ---
+## **Security Model & Best Practices**
 
-## Practical Notes & Current Limitations
+### **Cryptographic Foundation**
+Aegis is built on a hybrid model:
+1.  **Key Agreement**: **ML-KEM 768 (Kyber)** provides quantum-resistant key encapsulation. This algorithm is now a finalized NIST standard (FIPS 203).
+2.  **Data Encryption**: **ChaCha20-Poly1305** is used for fast, authenticated encryption of message contents.
+3.  **Key Derivation & Hashing**: **Blake3** is used for key derivation and hashing, providing high speed and security.
 
-- Signed pre-key signatures: currently the signed-pre-key "signature" is a placeholder; **signature verification is not fully implemented**. Do not rely on this for authenticating key bundles in production until signature verification is implemented.
-- One-Time Pre-Keys (OTPKs) are returned by `getPublicKeyBundle()`. In production deployments, the server should ensure an OTPK, once used, is marked as consumed so it cannot be reused.
-- `exportIdentity()` returns a base64 JSON bundle (not encrypted) in the current version — this **must be replaced** with password-based encryption (e.g., Argon2 + ChaCha20-Poly1305) before using backups in production.
-- Concurrency: encryption/decryption in a single process are serialized per-session to avoid state races. If your app uses multiple processes/instances that may mutate the same session state, you must implement a cross-process lock.
-- The symmetric ratchet implemented is a hash-based ratchet derived from shared secrets (it provides forward secrecy for message sequences). It is not a full Signal-style Double Ratchet (no periodic Diffie-Hellman ratchet in this version).
-
----
-
-## Security & Threat Model
-
-- Aegis focuses on client-side E2E. Server responsibilities include safe distribution of public bundles and one-time pre-key consumption.
-- Use secure persistent storage (Keychain, Keystore), TLS for server APIs, and strong password-based encryption for any identity backups.
-- Before production use, audit cryptography choices and perform a security review (this project aims to be a foundation, not a complete audited product).
-
----
-
-## Contribution & Roadmap
-
-- Contributions are welcome — open issues/PRs for:
-  - Proper signature generation and verification for signed pre-keys
-  - Secure identity export/import with proper cryptography
-  - Full Double Ratchet implementation (DH ratchet)
-  - OTPK lifecycle management utilities and server-side example
-  - Cross-process locking for session state/storage
+### **Critical Implementation Notes**
+⚠️ **These points are essential for production security:**
+- **Signed Pre-Key Signatures**: The library includes a signature field for signed pre-keys, but **signature verification during session initialization must be implemented by the application** until a future library version provides it.
+- **One-Time Pre-Keys (OTPKs)**: The `getPublicKeyBundle()` function returns an OTPK. Your server **must** track used OTPKs and ensure they are never reused. Use `getAndConsumePublicKeyBundle()` as a reference for client-side management.
+- **Identity Backups**: The `exportIdentity()` function now uses a **memory-hard scrypt Key Derivation Function (KDF)** followed by ChaCha20-Poly1305 encryption. Ensure backups are stored securely.
+- **Concurrency**: Operations for a single session are serialized. If your application uses multiple processes/workers that might access the same session, you must implement cross-process locking for the storage adapter.
+- **Storage Security**: The storage adapter you provide holds all secret keys. **You are responsible for its security.** Use platform-backed secure storage.
 
 ---
+## **Contributing & Roadmap**
 
-## License
+We welcome contributions. Priority areas include:
+- Full implementation of signed pre-key verification.
+- Utilities for server-side OTPK lifecycle management.
+- Enhanced examples for cross-platform secure storage.
+
+---
+## **License**
 
 MIT
-
----

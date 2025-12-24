@@ -1,18 +1,6 @@
+// sender-keys.ts
 /**
  * Sender Keys for Scalable Group Messaging (Hash Ratchet)
- *
- * Implements the Sender Key protocol (similar to Signal's Sender Keys).
- *
- * CONCEPT:
- * - Each member generates a random 32-byte "Chain Key".
- * - From a Chain Key, we derive:
- *   1. A "Message Key" (to encrypt the actual content).
- *   2. The NEXT "Chain Key" (forward secrecy).
- *
- * - "Sender Key Distribution":
- *   - A user sends their current Chain Key + Public Signing Key to all members privately (1:1 sessions).
- *   - Members store this and can now decrypt ALL future messages from that user by ratcheting forward.
- *   - This is O(1) for sending messages (encrypt once).
  */
 
 import {
@@ -27,40 +15,10 @@ import {
   bytesToString,
 } from "./crypto";
 
-// Constants for KDF (Key Derivation Function)
+import { SenderKeyMessage, SenderKeyState, CryptoError } from "./types";
+
 const KDF_CHAIN_KEY_SEED = "aegis_sender_chain_step";
 const KDF_MESSAGE_KEY_SEED = "aegis_sender_message_key";
-
-export interface SenderKeyState {
-  chainKey: Uint8Array;
-  signatureKey: Uint8Array; // Public signing key (Identity or separate)
-  generation: number; // For identifying key generations (rotations)
-}
-
-/**
- * Payload sent to other group members to initialize them.
- * Encrypted via 1:1 sessions.
- */
-export interface SenderKeyDistributionMessage {
-  type: "distribution";
-  senderId: string;
-  groupId: string;
-  chainKey: string; // Base64
-  signatureKey: string; // Base64
-  generation: number;
-}
-
-/**
- * The actual group message payload.
- */
-export interface SenderKeyMessage {
-  type: "message";
-  senderId: string;
-  groupId: string;
-  generation: number;
-  cipherText: string;
-  nonce: string;
-}
 
 /**
  * Generate a new Sender Key State
@@ -68,13 +26,18 @@ export interface SenderKeyMessage {
 export function generateSenderKey(): SenderKeyState {
   const chainKey = generateKey();
   if (chainKey.length !== 32) {
-    throw new Error("Generated chain key must be 32 bytes");
+    throw new CryptoError(
+      "Generated chain key must be 32 bytes",
+      "SENDER_KEY_GENERATION",
+      { length: chainKey.length },
+    );
   }
 
   return {
     chainKey,
-    signatureKey: new Uint8Array(0), // Placeholder, ideally actual Sig Pub Key
-    generation: Math.floor(Date.now() / 1000), // Use timestamp as generation ID for simplicity
+    signatureKey: new Uint8Array(64), // Ed25519 signature key placeholder
+    generation: Math.floor(Date.now() / 1000),
+    sequence: 0,
   };
 }
 
@@ -82,7 +45,6 @@ export function generateSenderKey(): SenderKeyState {
  * Derive the Message Key from the current Chain Key
  */
 function deriveMessageKey(chainKey: Uint8Array): Uint8Array {
-  // HMAC-SHA256 or Blake3(chainKey, 0x01)
   return deriveKey(chainKey, KDF_MESSAGE_KEY_SEED, 32);
 }
 
@@ -90,13 +52,11 @@ function deriveMessageKey(chainKey: Uint8Array): Uint8Array {
  * Advance the Chain Key (Ratchet Forward)
  */
 function ratchetChainKey(chainKey: Uint8Array): Uint8Array {
-  // HMAC-SHA256 or Blake3(chainKey, 0x02)
   return deriveKey(chainKey, KDF_CHAIN_KEY_SEED, 32);
 }
 
 /**
- * Encrypt a message using the current Sender Key State.
- * ! MUTATES STATE (advances ratchet) !
+ * Encrypt a message using the current Sender Key State
  */
 export function encryptGroupMessage(
   state: SenderKeyState,
@@ -104,27 +64,32 @@ export function encryptGroupMessage(
   senderId: string,
   plaintext: string,
 ): SenderKeyMessage {
-  // Validate inputs
   if (!state || !state.chainKey || state.chainKey.length === 0) {
-    throw new Error("Invalid sender key state");
+    throw new CryptoError("Invalid sender key state", "ENCRYPT_INVALID_STATE");
   }
 
   if (!groupId || typeof groupId !== "string" || groupId.trim() === "") {
-    throw new Error("Group ID must be a non-empty string");
+    throw new CryptoError(
+      "Group ID must be a non-empty string",
+      "ENCRYPT_INVALID_GROUP_ID",
+    );
   }
 
   if (!senderId || typeof senderId !== "string" || senderId.trim() === "") {
-    throw new Error("Sender ID must be a non-empty string");
+    throw new CryptoError(
+      "Sender ID must be a non-empty string",
+      "ENCRYPT_INVALID_SENDER_ID",
+    );
   }
 
   if (!plaintext || typeof plaintext !== "string") {
-    throw new Error("Plaintext must be a non-empty string");
+    throw new CryptoError(
+      "Plaintext must be a non-empty string",
+      "ENCRYPT_INVALID_PLAINTEXT",
+    );
   }
 
-  // 1. Derive Message Key
   const messageKey = deriveMessageKey(state.chainKey);
-
-  // 2. Encrypt
   const nonce = generateNonce();
   const plaintextBytes = stringToBytes(plaintext);
   const cipherText = encrypt(messageKey, nonce, plaintextBytes);
@@ -134,34 +99,30 @@ export function encryptGroupMessage(
     senderId,
     groupId,
     generation: state.generation,
+    sequence: state.sequence,
     cipherText: bytesToBase64(cipherText),
     nonce: bytesToBase64(nonce),
   };
 
-  // 3. Ratchet Forward (Delete old key from memory conceptually)
   state.chainKey = ratchetChainKey(state.chainKey);
+  state.sequence++;
 
   return message;
 }
 
 /**
- * Decrypt a message using a known Chain Key.
- *
- * NOTE: In a real implementation, you must handle "out-of-order" messages by:
- * 1. Trying to decrypt with current chain key.
- * 2. If valid, return plaintext and ratchet forward.
- * 3. If "future" key (N steps ahead), fast-forward N steps, store skipped keys, decrypt.
- *
- * For this simplified implementation, we assume mostly ordered delivery or stateless trial.
- * But wait, we cannot be stateless. We must update the receiver's state of the sender.
+ * Decrypt a message using a known Chain Key
  */
 export function decryptGroupMessage(
   currentChainKey: Uint8Array,
   message: SenderKeyMessage,
+  expectedSequence?: number,
 ): { plaintext: string; nextChainKey: Uint8Array } {
-  // Validate inputs
   if (!currentChainKey || currentChainKey.length === 0) {
-    throw new Error("Current chain key must be a non-empty Uint8Array");
+    throw new CryptoError(
+      "Current chain key must be a non-empty Uint8Array",
+      "DECRYPT_INVALID_CHAIN_KEY",
+    );
   }
 
   if (
@@ -171,17 +132,31 @@ export function decryptGroupMessage(
     !message.cipherText ||
     !message.nonce
   ) {
-    throw new Error("Invalid message format: missing required fields");
+    throw new CryptoError(
+      "Invalid message format: missing required fields",
+      "DECRYPT_INVALID_MESSAGE",
+    );
   }
 
-  // Try decrypting with current derived message key
+  if (expectedSequence !== undefined && message.sequence < expectedSequence) {
+    throw new CryptoError(
+      `Message sequence too old: ${message.sequence} < ${expectedSequence}`,
+      "DECRYPT_SEQUENCE_TOO_OLD",
+      { sequence: message.sequence, expectedSequence },
+    );
+  }
+
   const messageKey = deriveMessageKey(currentChainKey);
   const nonce = base64ToBytes(message.nonce);
   const ciphertext = base64ToBytes(message.cipherText);
 
-  const plaintextBytes = decrypt(messageKey, nonce, ciphertext);
+  let plaintextBytes: Uint8Array;
+  try {
+    plaintextBytes = decrypt(messageKey, nonce, ciphertext);
+  } catch (error) {
+    throw new CryptoError("Failed to decrypt message", "DECRYPT_FAILED", error);
+  }
 
-  // If successful, calculate next chain key
   const nextChainKey = ratchetChainKey(currentChainKey);
 
   return {

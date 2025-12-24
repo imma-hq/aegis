@@ -1,225 +1,539 @@
+// group.ts
 import {
   generateSenderKey,
   encryptGroupMessage as encryptHashRatchet,
   decryptGroupMessage as decryptHashRatchet,
-  SenderKeyState,
+} from "./sender-keys";
+import {
   SenderKeyDistributionMessage,
   SenderKeyMessage,
-} from "./sender-keys";
+  GroupSessionData,
+  GroupInfo,
+  GroupError,
+} from "./types";
 
 import { bytesToBase64, base64ToBytes } from "./crypto";
-import { Aegis } from "./config";
-
-interface GroupSessionData {
-  groupId: string;
-  mySenderKey: SenderKeyState;
-  participants: {
-    [userId: string]: {
-      currentChainKey: string; // Base64
-    };
-  };
-}
-
-function validateGroupId(groupId: string): void {
-  if (!groupId || typeof groupId !== "string" || groupId.trim() === "") {
-    throw new Error("Group ID must be a non-empty string");
-  }
-}
-
-function validateSenderKeyState(state: SenderKeyState): void {
-  if (!state || !state.chainKey || state.chainKey.length === 0) {
-    throw new Error("Invalid sender key state");
-  }
-}
+import { Aegis } from "./aegis";
+import {
+  validateSenderKeyDistributionMessage,
+  validateSenderKeyMessage,
+  validateString,
+} from "./validator";
 
 const GROUP_STORAGE_PREFIX = "aegis_group_";
+const MAX_SEEN_SEQUENCES = 100;
 
-/**
- * Group Session Manager
- * Handles initializing groups, distributing sender keys, and messaging.
- */
+export class GroupSessionManager {
+  private aegis: Aegis;
+
+  constructor(aegisInstance: Aegis) {
+    this.aegis = aegisInstance;
+    if (!aegisInstance.isInitialized()) {
+      throw new GroupError(
+        "Aegis instance must be initialized before creating GroupSessionManager",
+      );
+    }
+  }
+
+  async createGroup(
+    groupId: string,
+    adminUserId: string,
+    initialMembers: string[] = [],
+  ): Promise<GroupSession> {
+    validateString(groupId, "groupId");
+    validateString(adminUserId, "adminUserId");
+
+    const senderKey = generateSenderKey();
+    const participants: { [userId: string]: any } = {};
+
+    for (const member of initialMembers) {
+      if (member !== adminUserId) {
+        participants[member] = {
+          currentChainKey: "",
+          lastSequence: -1,
+          seenSequences: [],
+          addedAt: Date.now(),
+        };
+      }
+    }
+
+    const data: GroupSessionData = {
+      groupId,
+      mySenderKey: {
+        chainKey: bytesToBase64(senderKey.chainKey),
+        signatureKey: bytesToBase64(senderKey.signatureKey),
+        generation: senderKey.generation,
+        sequence: senderKey.sequence,
+      },
+      participants,
+      adminUserId,
+      version: 1,
+      removedParticipants: [],
+      keyRotationLog: [
+        {
+          version: 1,
+          timestamp: Date.now(),
+          initiator: adminUserId,
+          reason: "group_creation",
+        },
+      ],
+    };
+
+    const session = new GroupSession(this.aegis, data);
+    await session.save();
+    return session;
+  }
+
+  async loadGroup(groupId: string): Promise<GroupSession | null> {
+    validateString(groupId, "groupId");
+
+    const key = `${GROUP_STORAGE_PREFIX}${groupId}`;
+    const stored = await this.aegis.getStorage().getItem(key);
+
+    if (!stored) {
+      return null;
+    }
+
+    try {
+      const data: GroupSessionData = JSON.parse(stored);
+
+      if (!data.groupId || !data.adminUserId || !data.mySenderKey) {
+        throw new GroupError("Invalid group session data", groupId);
+      }
+
+      return new GroupSession(this.aegis, data);
+    } catch (error) {
+      console.error(
+        `[Group] Failed to parse group session data for ${groupId}:`,
+        error,
+      );
+      return null;
+    }
+  }
+
+  async deleteGroup(groupId: string): Promise<void> {
+    validateString(groupId, "groupId");
+    await this.aegis
+      .getStorage()
+      .removeItem(`${GROUP_STORAGE_PREFIX}${groupId}`);
+  }
+
+  async listUserGroups(): Promise<string[]> {
+    const groups: string[] = [];
+    const storage = this.aegis.getStorage();
+
+    try {
+      if (storage.keys) {
+        const keys = await storage.keys();
+        if (keys && Array.isArray(keys)) {
+          for (const key of keys) {
+            if (key.startsWith(GROUP_STORAGE_PREFIX)) {
+              groups.push(key.substring(GROUP_STORAGE_PREFIX.length));
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn("[Group] Could not list groups:", error);
+    }
+
+    return groups;
+  }
+}
+
 export class GroupSession {
-  private groupId: string;
+  private aegis: Aegis;
   private data: GroupSessionData;
 
-  private constructor(groupId: string, data: GroupSessionData) {
-    validateGroupId(groupId);
-    validateSenderKeyState(data.mySenderKey);
-    this.groupId = groupId;
+  constructor(aegisInstance: Aegis, data: GroupSessionData) {
+    this.aegis = aegisInstance;
     this.data = data;
   }
 
-  /**
-   * Load or Create a Group Session
-   */
-  static async get(groupId: string): Promise<GroupSession> {
-    return GroupSession.getLoaded(groupId);
+  getGroupId(): string {
+    return this.data.groupId;
   }
 
-  /**
-   * Create a Distribution Message to send to a new participant.
-   * This MUST be sent via the secure 1:1 session (encryptMessage).
-   */
+  getAdminUserId(): string {
+    return this.data.adminUserId;
+  }
+
+  getVersion(): number {
+    return this.data.version;
+  }
+
+  getParticipants(): string[] {
+    return Object.keys(this.data.participants);
+  }
+
+  getRemovedParticipants(): string[] {
+    return [...this.data.removedParticipants];
+  }
+
+  isParticipant(userId: string): boolean {
+    return this.data.participants[userId] !== undefined;
+  }
+
+  isAdmin(userId: string): boolean {
+    return userId === this.data.adminUserId;
+  }
+
+  wasRemoved(userId: string): boolean {
+    return this.data.removedParticipants.includes(userId);
+  }
+
   createDistributionMessage(senderId: string): SenderKeyDistributionMessage {
-    if (!senderId || typeof senderId !== "string" || senderId.trim() === "") {
-      throw new Error("Sender ID must be a non-empty string");
+    validateString(senderId, "senderId");
+
+    if (!this.isParticipant(senderId) && !this.isAdmin(senderId)) {
+      throw new GroupError(
+        `User ${senderId} is not a participant in this group`,
+        this.data.groupId,
+      );
     }
 
     return {
       type: "distribution",
       senderId,
       groupId: this.data.groupId,
-      chainKey: bytesToBase64(this.data.mySenderKey.chainKey),
-      signatureKey: bytesToBase64(this.data.mySenderKey.signatureKey),
+      chainKey: this.data.mySenderKey.chainKey,
+      signatureKey: this.data.mySenderKey.signatureKey,
       generation: this.data.mySenderKey.generation,
     };
   }
 
-  /**
-   * Process an incoming Distribution Message from another member.
-   * Call this AFTER decrypting the 1:1 message containing this payload.
-   */
   async processDistributionMessage(
     payload: SenderKeyDistributionMessage,
   ): Promise<void> {
-    if (payload.groupId !== this.groupId) return;
+    validateSenderKeyDistributionMessage(payload);
 
-    // Store their Chain Key
-    this.data.participants[payload.senderId] = {
-      currentChainKey: payload.chainKey,
-    };
+    if (payload.groupId !== this.data.groupId) {
+      throw new GroupError(
+        `Distribution message group ID mismatch: ${payload.groupId} != ${this.data.groupId}`,
+        this.data.groupId,
+      );
+    }
+
+    if (this.wasRemoved(payload.senderId)) {
+      throw new GroupError(
+        `Sender ${payload.senderId} was removed from the group`,
+        this.data.groupId,
+      );
+    }
+
+    if (!this.data.participants[payload.senderId]) {
+      this.data.participants[payload.senderId] = {
+        currentChainKey: "",
+        lastSequence: -1,
+        seenSequences: [],
+        addedAt: Date.now(),
+      };
+    }
+
+    this.data.participants[payload.senderId].currentChainKey = payload.chainKey;
+    this.data.participants[payload.senderId].lastSequence = -1;
+    this.data.participants[payload.senderId].seenSequences = [];
 
     await this.save();
-    console.log(`[Group] Updated sender key for ${payload.senderId}`);
   }
 
-  /**
-   * Encrypt a message for the group.
-   * O(1) operation (just one encryption).
-   */
   async encrypt(
     plaintext: string,
-    myUserId: string,
+    senderId: string,
   ): Promise<SenderKeyMessage> {
-    if (!plaintext || typeof plaintext !== "string") {
-      throw new Error("Plaintext must be a non-empty string");
+    validateString(plaintext, "plaintext");
+    validateString(senderId, "senderId");
+
+    if (!this.isParticipant(senderId) && !this.isAdmin(senderId)) {
+      throw new GroupError(
+        `User ${senderId} is not a participant in this group`,
+        this.data.groupId,
+      );
     }
 
-    if (!myUserId || typeof myUserId !== "string" || myUserId.trim() === "") {
-      throw new Error("User ID must be a non-empty string");
-    }
+    const chainKeyBytes = base64ToBytes(this.data.mySenderKey.chainKey);
+    const signatureKeyBytes = base64ToBytes(this.data.mySenderKey.signatureKey);
+
+    const senderKeyState = {
+      chainKey: chainKeyBytes,
+      signatureKey: signatureKeyBytes,
+      generation: this.data.mySenderKey.generation,
+      sequence: this.data.mySenderKey.sequence,
+    };
 
     const msg = encryptHashRatchet(
-      this.data.mySenderKey,
-      this.groupId,
-      myUserId,
+      senderKeyState,
+      this.data.groupId,
+      senderId,
       plaintext,
     );
-    // console.log(`DEBUG_ALICE_KEY: ${bytesToBase64(this.data.mySenderKey.chainKey)}`);
-    await this.save(); // Save ratcheted state
+
+    this.data.mySenderKey.chainKey = bytesToBase64(senderKeyState.chainKey);
+    this.data.mySenderKey.sequence = senderKeyState.sequence;
+
+    await this.save();
+
     return msg;
   }
 
-  /**
-   * Decrypt a message from the group.
-   * O(1) operation.
-   */
   async decrypt(msg: SenderKeyMessage): Promise<string> {
-    if (
-      !msg ||
-      !msg.senderId ||
-      !msg.groupId ||
-      !msg.cipherText ||
-      !msg.nonce
-    ) {
-      throw new Error("Invalid message format");
+    validateSenderKeyMessage(msg);
+
+    if (msg.groupId !== this.data.groupId) {
+      throw new GroupError(
+        `Message group ID mismatch: ${msg.groupId} != ${this.data.groupId}`,
+        this.data.groupId,
+      );
+    }
+
+    if (this.wasRemoved(msg.senderId)) {
+      throw new GroupError(
+        `Sender ${msg.senderId} was removed from the group`,
+        this.data.groupId,
+      );
     }
 
     const participant = this.data.participants[msg.senderId];
     if (!participant) {
-      throw new Error(
+      throw new GroupError(
         `No sender key found for ${msg.senderId}. Did you receive a distribution message?`,
+        this.data.groupId,
       );
     }
 
+    if (
+      participant.lastSequence !== undefined &&
+      msg.sequence <= participant.lastSequence
+    ) {
+      if (
+        participant.seenSequences &&
+        participant.seenSequences.includes(msg.sequence)
+      ) {
+        throw new GroupError(
+          `Possible replay attack: duplicate sequence ${msg.sequence} from ${msg.senderId}`,
+          this.data.groupId,
+        );
+      }
+
+      if (participant.lastSequence - msg.sequence > 50) {
+        throw new GroupError(
+          `Message sequence too far in the past: ${msg.sequence}, last seen: ${participant.lastSequence}`,
+          this.data.groupId,
+        );
+      }
+    }
+
     const currentChainKey = base64ToBytes(participant.currentChainKey);
-    // Trial decrypt (and ratchet)
+
     const { plaintext, nextChainKey } = decryptHashRatchet(
       currentChainKey,
       msg,
+      participant.lastSequence,
     );
 
-    // Update state
     participant.currentChainKey = bytesToBase64(nextChainKey);
+
+    if (
+      participant.lastSequence === undefined ||
+      msg.sequence > participant.lastSequence
+    ) {
+      participant.lastSequence = msg.sequence;
+    }
+
+    participant.seenSequences = participant.seenSequences || [];
+    participant.seenSequences.push(msg.sequence);
+
+    if (participant.seenSequences.length > MAX_SEEN_SEQUENCES) {
+      participant.seenSequences =
+        participant.seenSequences.slice(-MAX_SEEN_SEQUENCES);
+    }
+
     await this.save();
 
     return plaintext;
   }
 
-  private async save(): Promise<void> {
-    // NOTE: In a real app complexity, we need a better proper serializer for Uint8Array <-> JSON
-    // because `JSON.stringify` on Uint8Array turns it into object {"0": 1, ...} or array.
-    // Let's implement a quick fix here or assume the StorageAdapter handles objects.
-    // For safety, let's stick to Base64 in storage for keys.
-    const storageFormat = {
-      groupId: this.data.groupId,
-      mySenderKey: {
-        chainKey: bytesToBase64(this.data.mySenderKey.chainKey),
-        signatureKey: bytesToBase64(this.data.mySenderKey.signatureKey),
-        generation: this.data.mySenderKey.generation,
-      },
-      participants: this.data.participants,
-    };
+  async addParticipant(
+    userId: string,
+    initiatorUserId: string,
+  ): Promise<SenderKeyDistributionMessage> {
+    validateString(userId, "userId");
+    validateString(initiatorUserId, "initiatorUserId");
 
-    await Aegis.getStorage().setItem(
-      `${GROUP_STORAGE_PREFIX}${this.groupId}`,
-      JSON.stringify(storageFormat),
-    );
-  }
-
-  // Override static get to handle deserialization
-  static async getLoaded(groupId: string): Promise<GroupSession> {
-    const key = `${GROUP_STORAGE_PREFIX}${groupId}`;
-    const stored = await Aegis.getStorage().getItem(key);
-
-    if (!stored) {
-      // Create new
-      const newData: GroupSessionData = {
-        groupId,
-        mySenderKey: generateSenderKey(),
-        participants: {},
-      };
-
-      // Persist using our custom format (Base64 for keys)
-      const storageFormat = {
-        groupId: newData.groupId,
-        mySenderKey: {
-          chainKey: bytesToBase64(newData.mySenderKey.chainKey),
-          signatureKey: bytesToBase64(newData.mySenderKey.signatureKey),
-          generation: newData.mySenderKey.generation,
-        },
-        participants: newData.participants,
-      };
-
-      await Aegis.getStorage().setItem(key, JSON.stringify(storageFormat));
-      return new GroupSession(groupId, newData);
+    if (!this.isAdmin(initiatorUserId)) {
+      throw new GroupError(
+        "Only group admin can add participants",
+        this.data.groupId,
+      );
     }
 
-    const raw = JSON.parse(stored);
-    const data: GroupSessionData = {
-      groupId: raw.groupId,
-      mySenderKey: {
-        chainKey: base64ToBytes(raw.mySenderKey.chainKey),
-        signatureKey: base64ToBytes(raw.mySenderKey.signatureKey),
-        generation: raw.mySenderKey.generation,
-      },
-      participants: raw.participants,
-    };
-    return new GroupSession(groupId, data);
-  }
-}
+    if (this.isParticipant(userId)) {
+      throw new GroupError(
+        `Participant ${userId} is already in the group`,
+        this.data.groupId,
+      );
+    }
 
-// Helper specific for the example/usage flow
-export async function getGroupSession(groupId: string): Promise<GroupSession> {
-  return GroupSession.getLoaded(groupId);
+    this.data.removedParticipants = this.data.removedParticipants.filter(
+      (id) => id !== userId,
+    );
+
+    this.data.participants[userId] = {
+      currentChainKey: "",
+      lastSequence: -1,
+      seenSequences: [],
+      addedAt: Date.now(),
+    };
+
+    await this.save();
+
+    return this.createDistributionMessage(initiatorUserId);
+  }
+
+  async removeParticipant(
+    userId: string,
+    initiatorUserId: string,
+    reason: string = "removed_by_admin",
+  ): Promise<SenderKeyDistributionMessage[]> {
+    validateString(userId, "userId");
+    validateString(initiatorUserId, "initiatorUserId");
+
+    if (!this.isAdmin(initiatorUserId)) {
+      throw new GroupError(
+        "Only group admin can remove participants",
+        this.data.groupId,
+      );
+    }
+
+    if (userId === initiatorUserId) {
+      throw new GroupError(
+        "Cannot remove yourself from group",
+        this.data.groupId,
+      );
+    }
+
+    if (!this.isParticipant(userId)) {
+      throw new GroupError(
+        `Participant ${userId} not found in group`,
+        this.data.groupId,
+      );
+    }
+
+    if (!this.data.removedParticipants.includes(userId)) {
+      this.data.removedParticipants.push(userId);
+    }
+
+    delete this.data.participants[userId];
+
+    const distributionMessages = await this.rotateKeys(
+      initiatorUserId,
+      `participant_removal:${userId}:${reason}`,
+    );
+
+    await this.save();
+
+    return distributionMessages;
+  }
+
+  async rotateKeys(
+    initiatorUserId: string,
+    reason: string = "manual_rotation",
+  ): Promise<SenderKeyDistributionMessage[]> {
+    validateString(initiatorUserId, "initiatorUserId");
+
+    if (!this.isAdmin(initiatorUserId)) {
+      throw new GroupError(
+        "Only group admin can rotate keys",
+        this.data.groupId,
+      );
+    }
+
+    const newSenderKey = generateSenderKey();
+
+    this.data.mySenderKey = {
+      chainKey: bytesToBase64(newSenderKey.chainKey),
+      signatureKey: bytesToBase64(newSenderKey.signatureKey),
+      generation: newSenderKey.generation,
+      sequence: newSenderKey.sequence,
+    };
+
+    this.data.version += 1;
+
+    this.data.keyRotationLog.push({
+      version: this.data.version,
+      timestamp: Date.now(),
+      initiator: initiatorUserId,
+      reason,
+    });
+
+    const distributionMessages: SenderKeyDistributionMessage[] = [];
+
+    for (const [participantId, participantData] of Object.entries(
+      this.data.participants,
+    )) {
+      if (this.data.removedParticipants.includes(participantId)) {
+        continue;
+      }
+
+      const distributionMsg: SenderKeyDistributionMessage = {
+        type: "distribution",
+        senderId: this.aegis.getUserId() || "unknown",
+        groupId: this.data.groupId,
+        chainKey: this.data.mySenderKey.chainKey,
+        signatureKey: this.data.mySenderKey.signatureKey,
+        generation: this.data.mySenderKey.generation,
+      };
+
+      distributionMessages.push(distributionMsg);
+
+      participantData.currentChainKey = this.data.mySenderKey.chainKey;
+      participantData.lastSequence = -1;
+      participantData.seenSequences = [];
+    }
+
+    await this.save();
+
+    return distributionMessages;
+  }
+
+  getKeyRotationLog(): Array<{
+    version: number;
+    timestamp: number;
+    initiator: string;
+    reason: string;
+  }> {
+    return [...this.data.keyRotationLog];
+  }
+
+  getGroupInfo(): GroupInfo {
+    const lastRotation =
+      this.data.keyRotationLog.length > 0
+        ? this.data.keyRotationLog[this.data.keyRotationLog.length - 1]
+            .timestamp
+        : null;
+
+    return {
+      groupId: this.data.groupId,
+      adminUserId: this.data.adminUserId,
+      version: this.data.version,
+      participantCount: Object.keys(this.data.participants).length,
+      removedParticipantCount: this.data.removedParticipants.length,
+      lastKeyRotation: lastRotation,
+    };
+  }
+
+  async save(): Promise<void> {
+    await this.aegis
+      .getStorage()
+      .setItem(
+        `${GROUP_STORAGE_PREFIX}${this.data.groupId}`,
+        JSON.stringify(this.data),
+      );
+  }
+
+  async delete(): Promise<void> {
+    await this.aegis
+      .getStorage()
+      .removeItem(`${GROUP_STORAGE_PREFIX}${this.data.groupId}`);
+  }
 }

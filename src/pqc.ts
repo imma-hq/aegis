@@ -1,12 +1,4 @@
-/**
- * Post-Quantum Cryptography Identity Management
- *
- * Implements user identity using ML-KEM (Kyber 768) for key encapsulation
- * and key management. Each user has:
- * - KEM key pair: For establishing shared secrets
- * - Signature key pair: For signing messages
- */
-
+// pqc.ts
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import {
@@ -14,570 +6,713 @@ import {
   bytesToBase64,
   base64ToBytes,
   bytesToHex,
-  deriveKey,
   encrypt,
   decrypt,
   generateNonce,
+  getRandomBytes,
+  scrypt,
 } from "./crypto";
-import { Aegis } from "./config";
-import type { UserIdentity, PQKeyPair } from "@/types";
+import { Aegis } from "./aegis";
+import { validateUserIdentity, validateString } from "./validator";
+import {
+  UserIdentity,
+  PQKeyPair,
+  ExtendedUserIdentity,
+  SignedPreKey,
+  OneTimePreKey,
+  PublicKeyBundle,
+  OTPKStatus,
+  ReplenishmentResult,
+  ConsumedOTPKResult,
+  IdentityBackupV3,
+  CryptoError,
+  ValidationError,
+} from "./types";
 
 const IDENTITY_STORAGE_KEY = "aegis_pqc_identity";
-const IDENTITY_VERSION = "2.0.0";
+const IDENTITY_VERSION = "3.0.0";
+const MIN_OTPKS = 20;
+const OTPK_BATCH_SIZE = 100;
+const MAX_OTPKS = 1000;
 
-export interface SignedPreKey {
-  id: number;
-  keyPair: PQKeyPair;
-  signature: Uint8Array;
-  createdAt: number;
-}
+export class PQCIdentityManager {
+  private aegis: Aegis;
 
-export interface OneTimePreKey {
-  id: number;
-  keyPair: PQKeyPair;
-}
-
-// Extend UserIdentity to hold PreKeys (internal storage)
-interface ExtendedUserIdentity extends UserIdentity {
-  signedPreKey: SignedPreKey;
-  oneTimePreKeys: OneTimePreKey[];
-}
-
-/**
- * Generate a new KEM key pair using ML-KEM 768
- */
-function generateKEMKeyPair(): PQKeyPair {
-  const keyPair = ml_kem768.keygen();
-  return {
-    publicKey: keyPair.publicKey,
-    secretKey: keyPair.secretKey,
-  };
-}
-
-/**
- * Generate a new signature key pair (Ed25519)
- */
-async function generateSignatureKeyPair(): Promise<PQKeyPair> {
-  const secretKey = ed25519.utils.randomSecretKey();
-  const publicKey = await ed25519.getPublicKey(secretKey);
-  return {
-    publicKey,
-    secretKey,
-  };
-}
-
-/**
- * Create a new user identity
- * @param userId - Unique user identifier
- * @param authMethod - Authentication method ('phone' or 'email')
- * @param identifier - Phone number or email
- */
-export async function createIdentity(
-  userId: string,
-  authMethod: "phone" | "email",
-  identifier: string,
-): Promise<UserIdentity> {
-  // Validate inputs
-  if (!userId || typeof userId !== "string") {
-    throw new Error("User ID must be a non-empty string");
+  constructor(aegisInstance: Aegis) {
+    this.aegis = aegisInstance;
+    if (!aegisInstance.isInitialized()) {
+      throw new CryptoError(
+        "Aegis instance must be initialized before creating PQCIdentityManager",
+      );
+    }
   }
 
-  if (!authMethod || (authMethod !== "phone" && authMethod !== "email")) {
-    throw new Error("Auth method must be either 'phone' or 'email'");
+  private generateKEMKeyPair(): PQKeyPair {
+    try {
+      const keyPair = ml_kem768.keygen();
+      return {
+        publicKey: keyPair.publicKey,
+        secretKey: keyPair.secretKey,
+      };
+    } catch (error) {
+      throw new CryptoError(
+        "Failed to generate KEM key pair",
+        "KEM_KEYGEN",
+        error,
+      );
+    }
   }
 
-  if (!identifier || typeof identifier !== "string") {
-    throw new Error("Identifier must be a non-empty string");
-  }
-  const kem = generateKEMKeyPair();
-  const sig = await generateSignatureKeyPair();
-
-  // Generate initial Signed PreKey and sign it with the identity signature key
-  const signedPreKey = await generateSignedPreKey(sig.secretKey);
-
-  // Generate initial batch of 50 One-Time PreKeys
-  const oneTimePreKeys = generateOneTimePreKeys(50);
-
-  const identity: ExtendedUserIdentity = {
-    kem,
-    sig,
-    userId,
-    authMethod,
-    identifier,
-    createdAt: Date.now(),
-    version: IDENTITY_VERSION,
-    signedPreKey,
-    oneTimePreKeys,
-  };
-
-  await saveIdentity(identity);
-  console.log("[PQC Identity] Created new identity for user:", userId);
-
-  return identity;
-}
-
-async function generateSignedPreKey(
-  signingSecretKey?: Uint8Array,
-): Promise<SignedPreKey> {
-  const keyPair = generateKEMKeyPair();
-  let signature: Uint8Array;
-
-  if (signingSecretKey && signingSecretKey.length > 0) {
-    // Sign the SPK public key with identity Ed25519 secret key
-    signature = await ed25519.sign(keyPair.publicKey, signingSecretKey);
-  } else {
-    // Fallback for compatibility: use hash as a placeholder signature
-    signature = hash(keyPair.publicKey);
+  private async generateSignatureKeyPair(): Promise<PQKeyPair> {
+    try {
+      const secretKey = ed25519.utils.randomSecretKey();
+      const publicKey = await ed25519.getPublicKey(secretKey);
+      return {
+        publicKey,
+        secretKey,
+      };
+    } catch (error) {
+      throw new CryptoError(
+        "Failed to generate signature key pair",
+        "SIG_KEYGEN",
+        error,
+      );
+    }
   }
 
-  return {
-    id: Math.floor(Date.now() / 1000), // Simple ID scheme
-    keyPair,
-    signature,
-    createdAt: Date.now(),
-  };
-}
-
-function generateOneTimePreKeys(count: number): OneTimePreKey[] {
-  const keys: OneTimePreKey[] = [];
-  for (let i = 0; i < count; i++) {
-    keys.push({
-      id: i,
-      keyPair: generateKEMKeyPair(),
-    });
-  }
-  return keys;
-}
-
-/**
- * Save identity to secure storage
- */
-export async function saveIdentity(identity: UserIdentity): Promise<void> {
-  if (!identity) {
-    throw new Error("Identity cannot be null or undefined");
-  }
-
-  if (!identity.userId || !identity.authMethod || !identity.identifier) {
-    throw new Error("Identity is missing required fields");
-  }
-  const extendedIdentity = identity as ExtendedUserIdentity;
-  const serialized = JSON.stringify({
-    kem: {
-      publicKey: bytesToBase64(identity.kem.publicKey),
-      secretKey: bytesToBase64(identity.kem.secretKey),
-    },
-    sig: {
-      publicKey: bytesToBase64(identity.sig.publicKey),
-      secretKey: bytesToBase64(identity.sig.secretKey),
-    },
-    signedPreKey: extendedIdentity.signedPreKey
-      ? {
-          id: extendedIdentity.signedPreKey.id,
-          key: {
-            pub: bytesToBase64(extendedIdentity.signedPreKey.keyPair.publicKey),
-            sec: bytesToBase64(extendedIdentity.signedPreKey.keyPair.secretKey),
-          },
-          sig: bytesToBase64(extendedIdentity.signedPreKey.signature),
-          created: extendedIdentity.signedPreKey.createdAt,
-        }
-      : undefined,
-    oneTimePreKeys: extendedIdentity.oneTimePreKeys
-      ? extendedIdentity.oneTimePreKeys.map((k) => ({
-          id: k.id,
-          pub: bytesToBase64(k.keyPair.publicKey),
-          sec: bytesToBase64(k.keyPair.secretKey),
-        }))
-      : [],
-    userId: identity.userId,
-    authMethod: identity.authMethod,
-    identifier: identity.identifier,
-    createdAt: identity.createdAt,
-    version: identity.version,
-  });
-
-  await Aegis.getStorage().setItem(IDENTITY_STORAGE_KEY, serialized);
-}
-
-/**
- * Load identity from secure storage
- */
-export async function loadIdentity(): Promise<UserIdentity | null> {
-  const serialized = await Aegis.getStorage().getItem(IDENTITY_STORAGE_KEY);
-  if (!serialized) {
-    return null;
-  }
-
-  try {
-    const data = JSON.parse(serialized);
-
-    // Validate required fields
-    if (!data.userId || !data.authMethod || !data.identifier || !data.version) {
-      throw new Error("Invalid identity data: missing required fields");
+  private generateOneTimePreKeys(count: number): OneTimePreKey[] {
+    if (count <= 0 || count > MAX_OTPKS) {
+      throw new ValidationError(
+        `One-time pre-key count must be between 1 and ${MAX_OTPKS}`,
+        "otpkCount",
+        { count, min: 1, max: MAX_OTPKS },
+      );
     }
 
-    if (!data.kem || !data.kem.publicKey || !data.kem.secretKey) {
-      throw new Error("Invalid identity data: missing KEM keys");
+    const keys: OneTimePreKey[] = [];
+    const baseId = Date.now();
+
+    for (let i = 0; i < count; i++) {
+      try {
+        keys.push({
+          id: baseId + i,
+          keyPair: this.generateKEMKeyPair(),
+        });
+      } catch (error) {
+        throw new CryptoError(
+          `Failed to generate OTPK at index ${i}`,
+          "OTPK_GENERATION",
+          error,
+        );
+      }
     }
 
-    if (!data.sig || !data.sig.publicKey || !data.sig.secretKey) {
-      throw new Error("Invalid identity data: missing signature keys");
+    return keys;
+  }
+
+  async replenishOneTimePreKeys(): Promise<ReplenishmentResult> {
+    const identity = (await this.loadIdentity()) as ExtendedUserIdentity;
+    if (!identity) {
+      throw new CryptoError("No identity found to replenish OTPKs");
     }
 
-    const identity: ExtendedUserIdentity = {
-      kem: {
-        publicKey: base64ToBytes(data.kem.publicKey),
-        secretKey: base64ToBytes(data.kem.secretKey),
-      },
-      sig: {
-        publicKey: base64ToBytes(data.sig.publicKey),
-        secretKey: base64ToBytes(data.sig.secretKey),
-      },
-      signedPreKey: data.signedPreKey
-        ? {
-            id: data.signedPreKey.id,
-            keyPair: {
-              publicKey: base64ToBytes(data.signedPreKey.key.pub),
-              secretKey: base64ToBytes(data.signedPreKey.key.sec),
-            },
-            signature: base64ToBytes(data.signedPreKey.sig),
-            createdAt: data.signedPreKey.created,
-          }
-        : (undefined as any), // Cast for compatibility if missing in old versions
-      oneTimePreKeys: data.oneTimePreKeys
-        ? data.oneTimePreKeys.map((k: any) => ({
-            id: k.id,
-            keyPair: {
-              publicKey: base64ToBytes(k.pub),
-              secretKey: base64ToBytes(k.sec),
-            },
-          }))
-        : [],
-      userId: data.userId,
-      authMethod: data.authMethod,
-      identifier: data.identifier,
-      createdAt: data.createdAt,
-      version: data.version,
-    };
+    const currentCount = identity.oneTimePreKeys.length;
+    let added = 0;
+    const wasLow = currentCount < MIN_OTPKS;
 
-    return identity;
-  } catch (error) {
-    console.error("[PQC Identity] Failed to parse identity:", error);
-    return null;
-  }
-}
+    if (currentCount >= MIN_OTPKS && currentCount < MAX_OTPKS / 2) {
+      console.log(`[PQC] OTPK count sufficient: ${currentCount}/${MIN_OTPKS}`);
+      return { added: 0, total: currentCount, wasLow };
+    }
 
-/**
- * Delete identity from secure storage
- */
-export async function deleteIdentity(): Promise<void> {
-  await Aegis.getStorage().removeItem(IDENTITY_STORAGE_KEY);
-  console.log("[PQC Identity] Deleted identity");
-}
+    const needed = Math.min(OTPK_BATCH_SIZE, MAX_OTPKS - currentCount);
 
-/**
- * Export identity for backup
- * Returns a password-encrypted backup bundle
- */
-export async function exportIdentity(password: string): Promise<string> {
-  if (!password || typeof password !== "string") {
-    throw new Error("Password must be a non-empty string");
-  }
-  const identity = await loadIdentity();
-  if (!identity) {
-    throw new Error("No identity to export");
-  }
-
-  const serialized = JSON.stringify({
-    kem: {
-      publicKey: bytesToBase64(identity.kem.publicKey),
-      secretKey: bytesToBase64(identity.kem.secretKey),
-    },
-    sig: {
-      publicKey: bytesToBase64(identity.sig.publicKey),
-      secretKey: bytesToBase64(identity.sig.secretKey),
-    },
-    userId: identity.userId,
-    authMethod: identity.authMethod,
-    identifier: identity.identifier,
-    createdAt: identity.createdAt,
-    version: identity.version,
-  });
-
-  // Generate a random salt and derive an encryption key from the password + salt.
-  // NOTE: For production, use a slow password KDF (Argon2, scrypt) with a proper salt.
-  const salt = generateNonce(); // 12-byte salt
-  const key = deriveKey(
-    new Uint8Array([...new TextEncoder().encode(password), ...salt]),
-    "aegis_identity_backup_v1",
-    32,
-  );
-
-  // Encrypt the serialized identity using ChaCha20-Poly1305
-  const nonce = generateNonce(); // 12-byte nonce
-  const ciphertext = encrypt(key, nonce, new TextEncoder().encode(serialized));
-
-  const backup = JSON.stringify({
-    v: "1",
-    salt: bytesToBase64(salt),
-    nonce: bytesToBase64(nonce),
-    ciphertext: bytesToBase64(ciphertext),
-  });
-
-  return bytesToBase64(new TextEncoder().encode(backup));
-}
-
-/**
- * Import identity from backup
- */
-export async function importIdentity(
-  backupData: string,
-  password: string,
-): Promise<UserIdentity> {
-  if (!backupData || typeof backupData !== "string") {
-    throw new Error("Backup data must be a non-empty string");
-  }
-
-  if (!password || typeof password !== "string") {
-    throw new Error("Password must be a non-empty string");
-  }
-  try {
-    // Decode backup
-    const decoded = new TextDecoder().decode(base64ToBytes(backupData));
-    const data = JSON.parse(decoded);
-
-    // Support both encrypted (v: '1') and legacy plaintext backups
-    let parsed: any = data;
-    if (data && data.v === "1" && data.salt && data.nonce && data.ciphertext) {
-      const salt = base64ToBytes(data.salt);
-      const nonce = base64ToBytes(data.nonce);
-      const ciphertext = base64ToBytes(data.ciphertext);
-
-      // Derive key from password + salt (same scheme as export)
-      const key = deriveKey(
-        new Uint8Array([...new TextEncoder().encode(password), ...salt]),
-        "aegis_identity_backup_v1",
-        32,
+    if (needed > 0) {
+      console.log(
+        `[PQC] Replenishing OTPKs: ${currentCount} -> ${currentCount + needed}`,
       );
 
-      // Decrypt; will throw on authentication failure (e.g., bad password or tampering)
-      const plaintextBytes = decrypt(key, nonce, ciphertext);
-      const plaintext = new TextDecoder().decode(plaintextBytes);
-      parsed = JSON.parse(plaintext);
+      const newOTPKs = this.generateOneTimePreKeys(needed);
+      identity.oneTimePreKeys.push(...newOTPKs);
+      added = needed;
+
+      await this.saveIdentity(identity);
+
+      console.log(
+        `[PQC] Successfully added ${added} OTPKs. Total: ${identity.oneTimePreKeys.length}`,
+      );
     }
 
-    if (!parsed.kem || !parsed.sig) {
-      throw new Error("Invalid identity backup format");
+    return {
+      added,
+      total: identity.oneTimePreKeys.length,
+      wasLow,
+    };
+  }
+
+  async checkAndReplenishOTPKs(): Promise<boolean> {
+    const identity = (await this.loadIdentity()) as ExtendedUserIdentity;
+    if (!identity) return false;
+
+    const currentCount = identity.oneTimePreKeys.length;
+
+    if (currentCount < MIN_OTPKS) {
+      console.log(
+        `[PQC] OTPKs low (${currentCount}/${MIN_OTPKS}), replenishing...`,
+      );
+      await this.replenishOneTimePreKeys();
+      return true;
     }
 
-    const identity: UserIdentity = {
-      kem: {
-        publicKey: base64ToBytes(parsed.kem.publicKey),
-        secretKey: base64ToBytes(parsed.kem.secretKey),
-      },
-      sig: {
-        publicKey: base64ToBytes(parsed.sig.publicKey),
-        secretKey: base64ToBytes(parsed.sig.secretKey),
-      },
-      userId: parsed.userId,
-      authMethod: parsed.authMethod,
-      identifier: parsed.identifier,
-      createdAt: parsed.createdAt,
-      version: parsed.version,
+    return false;
+  }
+
+  async getOTPKStatus(): Promise<OTPKStatus> {
+    const identity = (await this.loadIdentity()) as ExtendedUserIdentity;
+    if (!identity) {
+      throw new CryptoError("No identity found");
+    }
+
+    const count = identity.oneTimePreKeys.length;
+    const isLow = count < MIN_OTPKS;
+    const needsReplenishment = count < MIN_OTPKS * 2;
+
+    return {
+      count,
+      minRequired: MIN_OTPKS,
+      maxAllowed: MAX_OTPKS,
+      isLow,
+      needsReplenishment,
+    };
+  }
+
+  async createIdentity(
+    userId: string,
+    authMethod: "phone" | "email",
+    identifier: string,
+  ): Promise<UserIdentity> {
+    validateString(userId, "userId");
+
+    if (!authMethod || (authMethod !== "phone" && authMethod !== "email")) {
+      throw new ValidationError(
+        "Auth method must be either 'phone' or 'email'",
+        "authMethod",
+      );
+    }
+
+    validateString(identifier, "identifier");
+
+    const kem = this.generateKEMKeyPair();
+    const sig = await this.generateSignatureKeyPair();
+
+    const signedPreKey = await this.generateSignedPreKey(sig.secretKey);
+    const oneTimePreKeys = this.generateOneTimePreKeys(OTPK_BATCH_SIZE);
+
+    const identity: ExtendedUserIdentity = {
+      kem,
+      sig,
+      userId,
+      authMethod,
+      identifier,
+      createdAt: Date.now(),
+      version: IDENTITY_VERSION,
+      signedPreKey,
+      oneTimePreKeys,
     };
 
-    await saveIdentity(identity);
-    console.log("[PQC Identity] Imported identity for user:", identity.userId);
+    await this.saveIdentity(identity);
 
     return identity;
-  } catch (error) {
-    console.error("[PQC Identity] Failed to import identity:", error);
-    throw new Error("Failed to import identity: Invalid backup or password");
+  }
+
+  private async generateSignedPreKey(
+    signingSecretKey: Uint8Array,
+  ): Promise<SignedPreKey> {
+    try {
+      const keyPair = this.generateKEMKeyPair();
+      const signature = await ed25519.sign(keyPair.publicKey, signingSecretKey);
+
+      return {
+        id: Math.floor(Date.now() / 1000),
+        keyPair,
+        signature,
+        createdAt: Date.now(),
+      };
+    } catch (error) {
+      throw new CryptoError(
+        "Failed to generate signed pre-key",
+        "SPK_GENERATION",
+        error,
+      );
+    }
+  }
+
+  private async saveIdentity(identity: UserIdentity): Promise<void> {
+    if (!identity) {
+      throw new ValidationError("Identity cannot be null or undefined");
+    }
+
+    try {
+      validateUserIdentity(identity);
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        throw error;
+      }
+      throw new CryptoError(
+        "Failed to validate identity",
+        "IDENTITY_VALIDATION",
+        error,
+      );
+    }
+
+    const extendedIdentity = identity as ExtendedUserIdentity;
+    const serialized = JSON.stringify({
+      kem: {
+        publicKey: bytesToBase64(identity.kem.publicKey),
+        secretKey: bytesToBase64(identity.kem.secretKey),
+      },
+      sig: {
+        publicKey: bytesToBase64(identity.sig.publicKey),
+        secretKey: bytesToBase64(identity.sig.secretKey),
+      },
+      signedPreKey: {
+        id: extendedIdentity.signedPreKey.id,
+        key: {
+          pub: bytesToBase64(extendedIdentity.signedPreKey.keyPair.publicKey),
+          sec: bytesToBase64(extendedIdentity.signedPreKey.keyPair.secretKey),
+        },
+        sig: bytesToBase64(extendedIdentity.signedPreKey.signature),
+        created: extendedIdentity.signedPreKey.createdAt,
+      },
+      oneTimePreKeys: extendedIdentity.oneTimePreKeys.map((k) => ({
+        id: k.id,
+        pub: bytesToBase64(k.keyPair.publicKey),
+        sec: bytesToBase64(k.keyPair.secretKey),
+      })),
+      userId: identity.userId,
+      authMethod: identity.authMethod,
+      identifier: identity.identifier,
+      createdAt: identity.createdAt,
+      version: identity.version,
+    });
+
+    await this.aegis.getStorage().setItem(IDENTITY_STORAGE_KEY, serialized);
+  }
+
+  async loadIdentity(): Promise<UserIdentity | null> {
+    const serialized = await this.aegis
+      .getStorage()
+      .getItem(IDENTITY_STORAGE_KEY);
+    if (!serialized) {
+      return null;
+    }
+
+    try {
+      const data = JSON.parse(serialized);
+
+      if (
+        !data.userId ||
+        !data.authMethod ||
+        !data.identifier ||
+        !data.version
+      ) {
+        throw new ValidationError(
+          "Invalid identity data: missing required fields",
+        );
+      }
+
+      if (!data.kem || !data.kem.publicKey || !data.kem.secretKey) {
+        throw new ValidationError("Invalid identity data: missing KEM keys");
+      }
+
+      if (!data.sig || !data.sig.publicKey || !data.sig.secretKey) {
+        throw new ValidationError(
+          "Invalid identity data: missing signature keys",
+        );
+      }
+
+      const identity: ExtendedUserIdentity = {
+        kem: {
+          publicKey: base64ToBytes(data.kem.publicKey),
+          secretKey: base64ToBytes(data.kem.secretKey),
+        },
+        sig: {
+          publicKey: base64ToBytes(data.sig.publicKey),
+          secretKey: base64ToBytes(data.sig.secretKey),
+        },
+        signedPreKey: {
+          id: data.signedPreKey.id,
+          keyPair: {
+            publicKey: base64ToBytes(data.signedPreKey.key.pub),
+            secretKey: base64ToBytes(data.signedPreKey.key.sec),
+          },
+          signature: base64ToBytes(data.signedPreKey.sig),
+          createdAt: data.signedPreKey.created,
+        },
+        oneTimePreKeys: data.oneTimePreKeys.map((k: any) => ({
+          id: k.id,
+          keyPair: {
+            publicKey: base64ToBytes(k.pub),
+            secretKey: base64ToBytes(k.sec),
+          },
+        })),
+        userId: data.userId,
+        authMethod: data.authMethod,
+        identifier: data.identifier,
+        createdAt: data.createdAt,
+        version: data.version,
+      };
+
+      return identity;
+    } catch (error) {
+      console.error("[PQC Identity] Failed to parse identity:", error);
+      return null;
+    }
+  }
+
+  async deleteIdentity(): Promise<void> {
+    await this.aegis.getStorage().removeItem(IDENTITY_STORAGE_KEY);
+  }
+
+  async rotateSignedPreKey(): Promise<{ newId: number; publicKey: string }> {
+    const identity = (await this.loadIdentity()) as ExtendedUserIdentity;
+    if (!identity) {
+      throw new CryptoError("No identity found");
+    }
+
+    const newSignedPreKey = await this.generateSignedPreKey(
+      identity.sig.secretKey,
+    );
+    identity.signedPreKey = newSignedPreKey;
+
+    await this.saveIdentity(identity);
+
+    return {
+      newId: newSignedPreKey.id,
+      publicKey: bytesToBase64(newSignedPreKey.keyPair.publicKey),
+    };
+  }
+
+  async getAndConsumeOneTimePreKey(): Promise<ConsumedOTPKResult | null> {
+    const identity = (await this.loadIdentity()) as ExtendedUserIdentity;
+    if (!identity) {
+      throw new CryptoError("No identity found");
+    }
+
+    if (identity.oneTimePreKeys.length === 0) {
+      await this.replenishOneTimePreKeys();
+
+      if (identity.oneTimePreKeys.length === 0) {
+        throw new CryptoError("Failed to generate OTPKs");
+      }
+    }
+
+    const otpk = identity.oneTimePreKeys.shift()!;
+    const remaining = identity.oneTimePreKeys.length;
+
+    await this.saveIdentity(identity);
+
+    if (remaining < MIN_OTPKS) {
+      setTimeout(() => this.replenishOneTimePreKeys(), 1000);
+    }
+
+    return {
+      id: otpk.id,
+      keyPair: otpk.keyPair,
+      remaining,
+    };
+  }
+
+  async getPublicKeyBundle(): Promise<PublicKeyBundle> {
+    const identity = (await this.loadIdentity()) as ExtendedUserIdentity;
+    if (!identity) {
+      throw new CryptoError("No identity found");
+    }
+
+    const otpk =
+      identity.oneTimePreKeys.length > 0
+        ? identity.oneTimePreKeys[0]
+        : undefined;
+
+    return {
+      identityKey: bytesToBase64(identity.kem.publicKey),
+      sigPublicKey: bytesToBase64(identity.sig.publicKey),
+      signedPreKey: {
+        id: identity.signedPreKey.id,
+        key: bytesToBase64(identity.signedPreKey.keyPair.publicKey),
+        signature: bytesToBase64(identity.signedPreKey.signature),
+      },
+      oneTimePreKey: otpk
+        ? {
+            id: otpk.id,
+            key: bytesToBase64(otpk.keyPair.publicKey),
+          }
+        : undefined,
+      userId: identity.userId,
+      otpkCount: identity.oneTimePreKeys.length,
+    };
+  }
+
+  async exportIdentity(password: string): Promise<string> {
+    if (
+      !password ||
+      typeof password !== "string" ||
+      password.trim().length === 0
+    ) {
+      throw new ValidationError(
+        "Password must be a non-empty string",
+        "password",
+      );
+    }
+
+    const identity = await this.loadIdentity();
+    if (!identity) {
+      throw new CryptoError("No identity to export");
+    }
+
+    const serialized = JSON.stringify({
+      kem: {
+        publicKey: bytesToBase64(identity.kem.publicKey),
+        secretKey: bytesToBase64(identity.kem.secretKey),
+      },
+      sig: {
+        publicKey: bytesToBase64(identity.sig.publicKey),
+        secretKey: bytesToBase64(identity.sig.secretKey),
+      },
+      userId: identity.userId,
+      authMethod: identity.authMethod,
+      identifier: identity.identifier,
+      createdAt: identity.createdAt,
+      version: identity.version,
+    });
+
+    const salt = getRandomBytes(32);
+    const key = await this.deriveBackupKey(password, salt);
+    const nonce = generateNonce();
+    const ciphertext = encrypt(
+      key,
+      nonce,
+      new TextEncoder().encode(serialized),
+    );
+
+    const backup: IdentityBackupV3 = {
+      v: "3",
+      algorithm: "scrypt+chacha20poly1305",
+      params: {
+        N: 131072,
+        r: 8,
+        p: 1,
+        dkLen: 32,
+      },
+      salt: bytesToBase64(salt),
+      nonce: bytesToBase64(nonce),
+      ciphertext: bytesToBase64(ciphertext),
+    };
+
+    return bytesToBase64(new TextEncoder().encode(JSON.stringify(backup)));
+  }
+
+  async importIdentity(
+    backupData: string,
+    password: string,
+  ): Promise<UserIdentity> {
+    if (
+      !backupData ||
+      typeof backupData !== "string" ||
+      backupData.trim().length === 0
+    ) {
+      throw new ValidationError(
+        "Backup data must be a non-empty string",
+        "backupData",
+      );
+    }
+
+    if (
+      !password ||
+      typeof password !== "string" ||
+      password.trim().length === 0
+    ) {
+      throw new ValidationError(
+        "Password must be a non-empty string",
+        "password",
+      );
+    }
+
+    try {
+      const decoded = new TextDecoder().decode(base64ToBytes(backupData));
+      const data = JSON.parse(decoded);
+
+      if (data.v !== "3") {
+        throw new ValidationError(
+          `Unsupported backup version: ${data.v}. Expected v3`,
+          "backupVersion",
+          { received: data.v, expected: "3" },
+        );
+      }
+
+      const backup = data as IdentityBackupV3;
+      const salt = base64ToBytes(backup.salt);
+      const nonce = base64ToBytes(backup.nonce);
+      const ciphertext = base64ToBytes(backup.ciphertext);
+
+      const key = await this.deriveBackupKey(password, salt);
+      const plaintextBytes = decrypt(key, nonce, ciphertext);
+      const plaintext = new TextDecoder().decode(plaintextBytes);
+      const parsed = JSON.parse(plaintext);
+
+      if (!parsed.kem || !parsed.sig) {
+        throw new ValidationError(
+          "Invalid identity backup format",
+          "backupFormat",
+        );
+      }
+
+      const identity: ExtendedUserIdentity = {
+        kem: {
+          publicKey: base64ToBytes(parsed.kem.publicKey),
+          secretKey: base64ToBytes(parsed.kem.secretKey),
+        },
+        sig: {
+          publicKey: base64ToBytes(parsed.sig.publicKey),
+          secretKey: base64ToBytes(parsed.sig.secretKey),
+        },
+        signedPreKey: await this.generateSignedPreKey(
+          base64ToBytes(parsed.sig.secretKey),
+        ),
+        oneTimePreKeys: this.generateOneTimePreKeys(OTPK_BATCH_SIZE),
+        userId: parsed.userId,
+        authMethod: parsed.authMethod,
+        identifier: parsed.identifier,
+        createdAt: parsed.createdAt || Date.now(),
+        version: parsed.version || IDENTITY_VERSION,
+      };
+
+      await this.saveIdentity(identity);
+
+      return identity;
+    } catch (error) {
+      console.error("[PQC Identity] Failed to import identity:", error);
+      if (
+        error instanceof Error &&
+        (error.message.includes("authentication") ||
+          error.message.includes("decryption failed"))
+      ) {
+        throw new CryptoError(
+          "Failed to import identity: Invalid password or corrupted backup",
+          "BACKUP_DECRYPTION",
+          error,
+        );
+      }
+      throw new CryptoError(
+        `Failed to import identity: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "BACKUP_IMPORT",
+        error,
+      );
+    }
+  }
+
+  private async deriveBackupKey(
+    password: string,
+    salt: Uint8Array,
+  ): Promise<Uint8Array> {
+    try {
+      return await scrypt(password, salt, {
+        N: 131072,
+        r: 8,
+        p: 1,
+        dkLen: 32,
+      });
+    } catch (error) {
+      throw new CryptoError(
+        "Failed to derive backup key",
+        "KDF_DERIVATION",
+        error,
+      );
+    }
+  }
+
+  calculateSafetyNumber(
+    identity1KemPublic: Uint8Array,
+    identity1SigPublic: Uint8Array,
+    identity2KemPublic: Uint8Array,
+    identity2SigPublic: Uint8Array,
+  ): string {
+    if (
+      !identity1KemPublic ||
+      identity1KemPublic.length === 0 ||
+      !identity1SigPublic ||
+      identity1SigPublic.length === 0 ||
+      !identity2KemPublic ||
+      identity2KemPublic.length === 0 ||
+      !identity2SigPublic ||
+      identity2SigPublic.length === 0
+    ) {
+      throw new ValidationError(
+        "All public keys must be non-empty Uint8Arrays",
+      );
+    }
+
+    const combined = new Uint8Array(
+      identity1KemPublic.length +
+        identity1SigPublic.length +
+        identity2KemPublic.length +
+        identity2SigPublic.length,
+    );
+
+    let offset = 0;
+    combined.set(identity1KemPublic, offset);
+    offset += identity1KemPublic.length;
+    combined.set(identity1SigPublic, offset);
+    offset += identity1SigPublic.length;
+    combined.set(identity2KemPublic, offset);
+    offset += identity2KemPublic.length;
+    combined.set(identity2SigPublic, offset);
+
+    const fingerprint = hash(combined, 32);
+    const hex = bytesToHex(fingerprint);
+    const numbers = [];
+
+    for (let i = 0; i < hex.length; i += 10) {
+      const chunk = hex.substring(i, i + 10);
+      const num = parseInt(chunk, 16) % 100000;
+      numbers.push(num.toString().padStart(5, "0"));
+    }
+
+    const result = [];
+    for (let i = 0; i < numbers.length && i < 6; i++) {
+      result.push(numbers[i]);
+    }
+
+    return result.join(" ");
   }
 }
 
-/**
- * Calculate safety number (fingerprint) for identity verification
- * Combines both users' public keys to create a unique fingerprint
- */
-export function calculateSafetyNumber(
-  identity1KemPublic: Uint8Array,
-  identity1SigPublic: Uint8Array,
-  identity2KemPublic: Uint8Array,
-  identity2SigPublic: Uint8Array,
-): string {
-  // Validate inputs
-  if (
-    !identity1KemPublic ||
-    identity1KemPublic.length === 0 ||
-    !identity1SigPublic ||
-    identity1SigPublic.length === 0 ||
-    !identity2KemPublic ||
-    identity2KemPublic.length === 0 ||
-    !identity2SigPublic ||
-    identity2SigPublic.length === 0
-  ) {
-    throw new Error("All public keys must be non-empty Uint8Arrays");
-  }
-  // Combine all public keys in a deterministic order
-  const combined = new Uint8Array(
-    identity1KemPublic.length +
-      identity1SigPublic.length +
-      identity2KemPublic.length +
-      identity2SigPublic.length,
-  );
-
-  let offset = 0;
-  combined.set(identity1KemPublic, offset);
-  offset += identity1KemPublic.length;
-  combined.set(identity1SigPublic, offset);
-  offset += identity1SigPublic.length;
-  combined.set(identity2KemPublic, offset);
-  offset += identity2KemPublic.length;
-  combined.set(identity2SigPublic, offset);
-
-  // Hash to create fingerprint
-  const fingerprint = hash(combined, 32);
-
-  // Convert to readable format (groups of 5 digits)
-  const hex = bytesToHex(fingerprint);
-  const numbers = [];
-
-  for (let i = 0; i < hex.length; i += 10) {
-    const chunk = hex.substring(i, i + 10);
-    const num = parseInt(chunk, 16) % 100000;
-    numbers.push(num.toString().padStart(5, "0"));
-  }
-
-  // Group into sets of 6 (30 digits total)
-  const result = [];
-  for (let i = 0; i < numbers.length && i < 6; i++) {
-    result.push(numbers[i]);
-  }
-
-  return result.join(" ");
-}
-
-/**
- * Get public key bundle (X3DH Triple Pre-Key Bundle)
- * Returns the Identity Key, Signed PreKey, and one One-Time PreKey.
- * This bundle allows a sender to establish a Forward Secure session.
- */
-export async function getPublicKeyBundle(): Promise<{
-  identityKey: string;
-  sigPublicKey: string;
-  signedPreKey: {
-    id: number;
-    key: string;
-    signature: string;
-  };
-  oneTimePreKey?: {
-    id: number;
-    key: string;
-  };
-  userId: string;
-}> {
-  const identity = (await loadIdentity()) as ExtendedUserIdentity;
-  if (!identity) {
-    throw new Error("No identity found");
-  }
-
-  // Pick a random One-Time PreKey (OTPK) effectively (or just the first one)
-  // In a real server implementation, the server stores these and hands out one per request.
-  // Since we are simulating or client-managed, we pop one? No, we shouldn't pop on GET, only on use.
-  // But here we just return one to simulate the bundle.
-  const otpk =
-    identity.oneTimePreKeys.length > 0 ? identity.oneTimePreKeys[0] : undefined;
-
-  return {
-    identityKey: bytesToBase64(identity.kem.publicKey),
-    sigPublicKey: bytesToBase64(identity.sig.publicKey),
-    signedPreKey: {
-      id: identity.signedPreKey.id,
-      key: bytesToBase64(identity.signedPreKey.keyPair.publicKey),
-      signature: bytesToBase64(identity.signedPreKey.signature),
-    },
-    oneTimePreKey: otpk
-      ? {
-          id: otpk.id,
-          key: bytesToBase64(otpk.keyPair.publicKey),
-        }
-      : undefined,
-    userId: identity.userId,
-  };
-}
-
-/**
- * Get and consume a public key bundle (consumes a One-Time PreKey)
- * This simulates server-side behavior where OTPKs are handed out once and
- * marked as used (removed from storage) so they cannot be reused.
- */
-export async function getAndConsumePublicKeyBundle(): Promise<{
-  identityKey: string;
-  sigPublicKey: string;
-  signedPreKey: {
-    id: number;
-    key: string;
-    signature: string;
-  };
-  oneTimePreKey?: {
-    id: number;
-    key: string;
-  };
-  userId: string;
-}> {
-  const identity = (await loadIdentity()) as ExtendedUserIdentity;
-  if (!identity) {
-    throw new Error("No identity found");
-  }
-
-  // Consume the first OTPK
-  const otpk =
-    identity.oneTimePreKeys.length > 0
-      ? identity.oneTimePreKeys.shift()
-      : undefined;
-
-  // Persist the updated identity (with OTPK removed)
-  await saveIdentity(identity);
-
-  return {
-    identityKey: bytesToBase64(identity.kem.publicKey),
-    sigPublicKey: bytesToBase64(identity.sig.publicKey),
-    signedPreKey: {
-      id: identity.signedPreKey.id,
-      key: bytesToBase64(identity.signedPreKey.keyPair.publicKey),
-      signature: bytesToBase64(identity.signedPreKey.signature),
-    },
-    oneTimePreKey: otpk
-      ? {
-          id: otpk.id,
-          key: bytesToBase64(otpk.keyPair.publicKey),
-        }
-      : undefined,
-    userId: identity.userId,
-  };
-}
-
-/**
- * Perform key encapsulation (sender side)
- * Returns shared secret and ciphertext to send to recipient
- */
 export function encapsulate(recipientKemPublicKey: Uint8Array): {
   sharedSecret: Uint8Array;
   ciphertext: Uint8Array;
 } {
   if (!recipientKemPublicKey || recipientKemPublicKey.length === 0) {
-    throw new Error("Recipient public key must be a non-empty Uint8Array");
+    throw new ValidationError(
+      "Recipient public key must be a non-empty Uint8Array",
+      "recipientKemPublicKey",
+    );
   }
-  const result = ml_kem768.encapsulate(recipientKemPublicKey);
-  return {
-    sharedSecret: result.sharedSecret,
-    ciphertext: result.cipherText,
-  };
+
+  try {
+    const result = ml_kem768.encapsulate(recipientKemPublicKey);
+    return {
+      sharedSecret: result.sharedSecret,
+      ciphertext: result.cipherText,
+    };
+  } catch (error) {
+    throw new CryptoError(
+      "Failed to encapsulate key",
+      "KEM_ENCAPSULATION",
+      error,
+    );
+  }
 }
 
-/**
- * Verify the Signed PreKey's signature using the identity signature public key
- */
 export async function verifySignedPreKey(
   spkPublicKey: Uint8Array,
   signature: Uint8Array,
@@ -585,25 +720,37 @@ export async function verifySignedPreKey(
 ): Promise<boolean> {
   try {
     return await ed25519.verify(signature, spkPublicKey, signerPublicKey);
-  } catch {
+  } catch (error) {
+    console.error("[PQC] Signature verification failed:", error);
     return false;
   }
 }
 
-/**
- * Perform key decapsulation (recipient side)
- * Recovers shared secret from ciphertext using secret key
- */
 export function decapsulate(
   ciphertext: Uint8Array,
   secretKey: Uint8Array,
 ): Uint8Array {
   if (!ciphertext || ciphertext.length === 0) {
-    throw new Error("Ciphertext must be a non-empty Uint8Array");
+    throw new ValidationError(
+      "Ciphertext must be a non-empty Uint8Array",
+      "ciphertext",
+    );
   }
 
   if (!secretKey || secretKey.length === 0) {
-    throw new Error("Secret key must be a non-empty Uint8Array");
+    throw new ValidationError(
+      "Secret key must be a non-empty Uint8Array",
+      "secretKey",
+    );
   }
-  return ml_kem768.decapsulate(ciphertext, secretKey);
+
+  try {
+    return ml_kem768.decapsulate(ciphertext, secretKey);
+  } catch (error) {
+    throw new CryptoError(
+      "Failed to decapsulate key",
+      "KEM_DECAPSULATION",
+      error,
+    );
+  }
 }

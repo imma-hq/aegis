@@ -1,16 +1,10 @@
-/**
- * Core Cryptographic Utilities
- */
-
+// crypto.ts - Ensuring consistent KDF contexts
 import { blake3 } from "@noble/hashes/blake3.js";
 import { chacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { randomBytes } from "@noble/hashes/utils.js";
 
 /**
  * Hash data using Blake3
- * @param data - Input data as Uint8Array or string
- * @param outputLength - Optional output length in bytes (default: 32)
- * @returns Blake3 hash as Uint8Array
  */
 export function hash(
   data: Uint8Array | string,
@@ -29,10 +23,7 @@ export function hash(
 }
 
 /**
- * Derive a key from input data using Blake3
- * @param data - Input data
- * @param context - Context string for domain separation
- * @param outputLength - Output length in bytes (default: 32)
+ * Derive a key from input data using Blake3 with proper domain separation
  */
 export function deriveKey(
   data: Uint8Array | string,
@@ -42,17 +33,17 @@ export function deriveKey(
   const input = typeof data === "string" ? stringToBytes(data) : data;
   const contextBytes = stringToBytes(context);
 
-  // Concatenate context and input
-  const combined = new Uint8Array(contextBytes.length + input.length);
+  // Use HKDF-style construction: hash(context || input)
+  const combined = new Uint8Array(contextBytes.length + input.length + 1);
   combined.set(contextBytes, 0);
   combined.set(input, contextBytes.length);
+  combined[combined.length - 1] = outputLength; // Add output length for domain separation
 
   return blake3(combined, { dkLen: outputLength });
 }
 
 /**
  * Generate cryptographically secure random bytes
- * @param length - Number of bytes to generate
  */
 export function getRandomBytes(length: number): Uint8Array {
   return randomBytes(length);
@@ -60,11 +51,6 @@ export function getRandomBytes(length: number): Uint8Array {
 
 /**
  * Encrypt data using ChaCha20-Poly1305
- * @param key - 32-byte encryption key
- * @param nonce - 12-byte nonce (must be unique for each message)
- * @param plaintext - Data to encrypt
- * @param associatedData - Optional authenticated data (not encrypted)
- * @returns Ciphertext with authentication tag appended
  */
 export function encrypt(
   key: Uint8Array,
@@ -85,12 +71,6 @@ export function encrypt(
 
 /**
  * Decrypt data using ChaCha20-Poly1305
- * @param key - 32-byte encryption key
- * @param nonce - 12-byte nonce
- * @param ciphertext - Encrypted data with authentication tag
- * @param associatedData - Optional authenticated data (must match encryption)
- * @returns Decrypted plaintext
- * @throws Error if authentication fails
  */
 export function decrypt(
   key: Uint8Array,
@@ -111,7 +91,6 @@ export function decrypt(
 
 /**
  * Generate a unique 12-byte nonce
- * IMPORTANT: Never reuse a nonce with the same key
  */
 export function generateNonce(): Uint8Array {
   return getRandomBytes(12);
@@ -139,48 +118,69 @@ export function bytesToString(bytes: Uint8Array): string {
 }
 
 /**
- * Convert Uint8Array to base64 string
+ * Convert Uint8Array to base64 string (URL-safe)
  */
 export function bytesToBase64(bytes: Uint8Array): string {
-  // Simple base64 encoding for React Native
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  }
+
   const binary = Array.from(bytes)
     .map((byte) => String.fromCharCode(byte))
     .join("");
 
-  // Use btoa if available (web), otherwise implement basic base64
   if (typeof btoa !== "undefined") {
-    return btoa(binary);
+    return btoa(binary)
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
   }
 
-  // Fallback base64 encoding
   const base64Chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   let result = "";
   let i = 0;
 
   while (i < bytes.length) {
-    const a = bytes[i++];
-    const b = i < bytes.length ? bytes[i++] : 0;
-    const c = i < bytes.length ? bytes[i++] : 0;
+    const byte1 = bytes[i++];
+    const byte2 = i < bytes.length ? bytes[i++] : 0;
+    const byte3 = i < bytes.length ? bytes[i++] : 0;
 
-    const bitmap = (a << 16) | (b << 8) | c;
+    const triplet = (byte1 << 16) | (byte2 << 8) | byte3;
 
-    result += base64Chars[(bitmap >> 18) & 63];
-    result += base64Chars[(bitmap >> 12) & 63];
-    result += i - 2 < bytes.length ? base64Chars[(bitmap >> 6) & 63] : "=";
-    result += i - 1 < bytes.length ? base64Chars[bitmap & 63] : "=";
+    result += base64Chars[(triplet >> 18) & 0x3f];
+    result += base64Chars[(triplet >> 12) & 0x3f];
+    result += i - 2 < bytes.length ? base64Chars[(triplet >> 6) & 0x3f] : "";
+    result += i - 1 < bytes.length ? base64Chars[triplet & 0x3f] : "";
   }
 
   return result;
 }
 
 /**
- * Convert base64 string to Uint8Array
+ * Convert base64 string to Uint8Array (handles URL-safe base64)
  */
 export function base64ToBytes(base64: string): Uint8Array {
-  // Use atob if available (web)
+  // Normalize base64 string (handle URL-safe encoding)
+  let normalized = base64.replace(/-/g, "+").replace(/_/g, "/");
+
+  // Add padding if needed
+  while (normalized.length % 4 !== 0) {
+    normalized += "=";
+  }
+
+  // For Node.js and modern browsers
+  if (typeof Buffer !== "undefined") {
+    return new Uint8Array(Buffer.from(normalized, "base64"));
+  }
+
+  // For React Native and web
   if (typeof atob !== "undefined") {
-    const binary = atob(base64);
+    const binary = atob(normalized);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i);
@@ -188,7 +188,7 @@ export function base64ToBytes(base64: string): Uint8Array {
     return bytes;
   }
 
-  // Fallback base64 decoding
+  // Fallback implementation
   const base64Chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   const lookup = new Uint8Array(256);
@@ -196,27 +196,25 @@ export function base64ToBytes(base64: string): Uint8Array {
     lookup[base64Chars.charCodeAt(i)] = i;
   }
 
-  const len = base64.length;
-  let bufferLength = base64.length * 0.75;
-  if (base64[len - 1] === "=") {
-    bufferLength--;
-    if (base64[len - 2] === "=") {
-      bufferLength--;
-    }
-  }
+  // Remove padding
+  const str = normalized.replace(/=+$/, "");
+  let bufferLength = str.length * 0.75;
 
   const bytes = new Uint8Array(bufferLength);
   let p = 0;
 
-  for (let i = 0; i < len; i += 4) {
-    const encoded1 = lookup[base64.charCodeAt(i)];
-    const encoded2 = lookup[base64.charCodeAt(i + 1)];
-    const encoded3 = lookup[base64.charCodeAt(i + 2)];
-    const encoded4 = lookup[base64.charCodeAt(i + 3)];
+  for (let i = 0; i < str.length; i += 4) {
+    const encoded1 = lookup[str.charCodeAt(i)];
+    const encoded2 = lookup[str.charCodeAt(i + 1)];
+    const encoded3 = i + 2 < str.length ? lookup[str.charCodeAt(i + 2)] : 0;
+    const encoded4 = i + 3 < str.length ? lookup[str.charCodeAt(i + 3)] : 0;
 
-    bytes[p++] = (encoded1 << 2) | (encoded2 >> 4);
-    if (p < bufferLength) bytes[p++] = ((encoded2 & 15) << 4) | (encoded3 >> 2);
-    if (p < bufferLength) bytes[p++] = ((encoded3 & 3) << 6) | (encoded4 & 63);
+    const triplet =
+      (encoded1 << 18) | (encoded2 << 12) | (encoded3 << 6) | encoded4;
+
+    if (p < bufferLength) bytes[p++] = (triplet >> 16) & 0xff;
+    if (p < bufferLength) bytes[p++] = (triplet >> 8) & 0xff;
+    if (p < bufferLength) bytes[p++] = triplet & 0xff;
   }
 
   return bytes;
@@ -249,7 +247,6 @@ export function hexToBytes(hex: string): Uint8Array {
 
 /**
  * Constant-time comparison of two Uint8Arrays
- * Prevents timing attacks
  */
 export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) {
@@ -265,9 +262,23 @@ export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
- * Zero out a buffer to clear sensitive data from memory (Best Effort)
- * Note: In JS, garbage collection might move memory, so this is not a guarantee.
+ * Zero out a buffer to clear sensitive data from memory
  */
 export function zeroBuffer(buffer: Uint8Array): void {
   buffer.fill(0);
+}
+
+/**
+ * Secure scrypt KDF implementation
+ */
+export async function scrypt(
+  password: string | Uint8Array,
+  salt: Uint8Array,
+  options: { N: number; r: number; p: number; dkLen: number },
+): Promise<Uint8Array> {
+  const passwordBytes =
+    typeof password === "string" ? stringToBytes(password) : password;
+
+  const { scrypt: nobleScrypt } = await import("@noble/hashes/scrypt.js");
+  return nobleScrypt(passwordBytes, salt, options);
 }
