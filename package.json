@@ -2,16 +2,9 @@
   "name": "@immahq/aegis",
   "version": "0.0.1",
   "description": "Lightweight, storage-agnostic library for client-side End-to-End (E2E) encryption",
+  "type": "module",
   "main": "./dist/index.js",
-  "module": "./dist/index.mjs",
-  "types": "aegis.d.ts",
-  "exports": {
-    ".": {
-      "types": "./aegis.d.ts",
-      "require": "./dist/index.js",
-      "import": "./dist/index.mjs"
-    }
-  },
+  "types": "./dist/index.d.ts",
   "scope": "immahq",
   "files": [
     "dist"
@@ -22,9 +15,11 @@
   "scripts": {
     "build": "npm run clean && tsc --build",
     "clean": "rimraf ./dist",
-    "sample": "tsx examples/demo.ts",
+    "demo": "tsx examples/demo.ts",
     "sample2": "tsx examples/demo.ts && tsx examples/full-demo.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:unit": "vitest run test/e2ee.test.ts",
+    "test:performance": "vitest run test/e2ee.bench.ts"
   },
   "repository": {
     "type": "git",
@@ -49,10 +44,10 @@
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
     "@noble/post-quantum": "^0.5.2",
-    "@types/node": "^25.0.3",
     "buffer": "^6.0.3"
   },
   "devDependencies": {
+    "@types/node": "^25.0.3",
     "rimraf": "^6.1.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
