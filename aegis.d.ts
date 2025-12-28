@@ -1,4 +1,7 @@
 declare module "@immahq/aegis" {
+  export interface Aegis {}
+  export interface MemoryStorage extends StorageAdapter {}
+
   export interface Identity {
     kemKeyPair: { publicKey: Uint8Array; secretKey: Uint8Array };
     dsaKeyPair: { publicKey: Uint8Array; secretKey: Uint8Array };
@@ -172,23 +175,23 @@ declare module "@immahq/aegis" {
       name: string,
       members: string[],
       memberKemPublicKeys: Map<string, Uint8Array>,
-      memberDsaPublicKeys: Map<string, Uint8Array>
+      memberDsaPublicKeys: Map<string, Uint8Array>,
     ): Promise<Group>;
     addMember(
       groupId: string,
       userId: string,
       session: Session,
-      userPublicKey: Uint8Array
+      userPublicKey: Uint8Array,
     ): Promise<void>;
     removeMember(groupId: string, userId: string): Promise<void>;
     updateGroupKey(groupId: string): Promise<void>;
     encryptMessage(
       groupId: string,
-      message: string | Uint8Array
+      message: string | Uint8Array,
     ): Promise<GroupMessage>;
     decryptMessage(
       groupId: string,
-      encrypted: GroupMessage
+      encrypted: GroupMessage,
     ): Promise<Uint8Array>;
     getGroup(groupId: string): Promise<Group | null>;
     getGroups(): Promise<Group[]>;
