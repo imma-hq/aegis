@@ -1,14 +1,15 @@
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { blake3 } from "@noble/hashes/blake3.js";
-import { bytesToHex, concatBytes } from "@noble/hashes/utils.js";
-import { KemRatchet } from "./ratchet.js";
-import type { Identity, PublicBundle } from "./types.js";
+import { bytesToHex, concatBytes, utf8ToBytes } from "@noble/hashes/utils.js";
+import { KemRatchet } from "./ratchet";
+import type { Identity, PublicBundle } from "./types";
 
 export class SessionKeyExchange {
   // Helper: Sort two Uint8Arrays lexicographically and return in consistent order
   private static getSortedKeys(
     key1: Uint8Array,
-    key2: Uint8Array,
+    key2: Uint8Array
   ): [Uint8Array, Uint8Array] {
     const str1 = bytesToHex(key1);
     const str2 = bytesToHex(key2);
@@ -19,23 +20,24 @@ export class SessionKeyExchange {
   private static createSessionId(
     key1: Uint8Array,
     key2: Uint8Array,
-    ciphertext: Uint8Array,
+    ciphertext: Uint8Array
   ): string {
     const [sortedKey1, sortedKey2] = this.getSortedKeys(key1, key2);
 
     return bytesToHex(
-      blake3(concatBytes(sortedKey1, sortedKey2, ciphertext), { dkLen: 32 }),
+      blake3(concatBytes(sortedKey1, sortedKey2, ciphertext), { dkLen: 32 })
     );
   }
 
   // For initiator (Alice): creates session with Bob's bundle
   static createInitiatorSession(
     localIdentity: Identity,
-    peerBundle: PublicBundle,
+    peerBundle: PublicBundle
   ): {
     sessionId: string;
     rootKey: Uint8Array;
-    chainKey: Uint8Array;
+    sendingChainKey: Uint8Array;
+    receivingChainKey: Uint8Array;
     ciphertext: Uint8Array;
     confirmationMac: Uint8Array;
   } {
@@ -48,6 +50,20 @@ export class SessionKeyExchange {
     }
     if (!(peerBundle.kemPublicKey instanceof Uint8Array)) {
       throw new Error("peerBundle.kemPublicKey is not Uint8Array");
+    }
+    if (!(peerBundle.preKey.signature instanceof Uint8Array)) {
+      throw new Error("peerBundle.preKey.signature is not Uint8Array");
+    }
+
+    // Verify the prekey signature
+    const isValidPreKeySignature = SessionKeyExchange.verifyPreKeySignature(
+      peerBundle.preKey.key,
+      peerBundle.preKey.signature,
+      peerBundle.dsaPublicKey
+    );
+
+    if (!isValidPreKeySignature) {
+      throw new Error("Invalid prekey signature");
     }
 
     // Perform KEM with peer's prekey
@@ -62,7 +78,7 @@ export class SessionKeyExchange {
 
     if (!(prekeySecret instanceof Uint8Array)) {
       throw new Error(
-        `prekeySecret is not Uint8Array, got ${typeof prekeySecret}`,
+        `prekeySecret is not Uint8Array, got ${typeof prekeySecret}`
       );
     }
     if (!(ciphertext instanceof Uint8Array)) {
@@ -73,47 +89,66 @@ export class SessionKeyExchange {
     const sessionId = this.createSessionId(
       localIdentity.kemKeyPair.publicKey,
       peerBundle.kemPublicKey,
-      ciphertext,
+      ciphertext
     );
 
     // Derive keys - BOTH PARTIES MUST USE EXACT SAME INPUTS
     const [sortedKey1, sortedKey2] = this.getSortedKeys(
       localIdentity.kemKeyPair.publicKey,
-      peerBundle.kemPublicKey,
+      peerBundle.kemPublicKey
     );
 
     const combined = concatBytes(
       prekeySecret,
       ciphertext,
       sortedKey1,
-      sortedKey2,
+      sortedKey2
     );
 
     const rootKey = blake3(combined, { dkLen: 32 });
-    const chainKey = blake3(concatBytes(rootKey, new Uint8Array([0])), {
-      dkLen: 32,
-    });
+
+    // Initial chain keys: Initiator sends on A, receives on B
+    const sendingChainKey = blake3(
+      concatBytes(rootKey, utf8ToBytes("chain_a")),
+      {
+        dkLen: 32,
+      }
+    );
+    const receivingChainKey = blake3(
+      concatBytes(rootKey, utf8ToBytes("chain_b")),
+      {
+        dkLen: 32,
+      }
+    );
 
     // Generate confirmation MAC
     const confirmationMac = KemRatchet.generateConfirmationMac(
       sessionId,
       rootKey,
-      chainKey,
-      false,
+      sendingChainKey,
+      false
     );
 
-    return { sessionId, rootKey, chainKey, ciphertext, confirmationMac };
+    return {
+      sessionId,
+      rootKey,
+      sendingChainKey,
+      receivingChainKey,
+      ciphertext,
+      confirmationMac,
+    };
   }
 
   static createResponderSession(
     localIdentity: Identity,
     peerBundle: PublicBundle,
     ciphertext: Uint8Array,
-    initiatorConfirmationMac?: Uint8Array,
+    initiatorConfirmationMac?: Uint8Array
   ): {
     sessionId: string;
     rootKey: Uint8Array;
-    chainKey: Uint8Array;
+    sendingChainKey: Uint8Array;
+    receivingChainKey: Uint8Array;
     confirmationMac: Uint8Array;
     isValid: boolean;
   } {
@@ -137,45 +172,56 @@ export class SessionKeyExchange {
     // Decapsulate prekey ciphertext
     const prekeySecret = ml_kem768.decapsulate(
       ciphertext,
-      localIdentity.preKeySecret,
+      localIdentity.preKeySecret
     );
 
     if (!(prekeySecret instanceof Uint8Array)) {
       throw new Error(
-        `ml_kem768.decapsulate returned non-Uint8Array: ${typeof prekeySecret}`,
+        `ml_kem768.decapsulate returned non-Uint8Array: ${typeof prekeySecret}`
       );
     }
 
     const sessionId = this.createSessionId(
       localIdentity.kemKeyPair.publicKey,
       peerBundle.kemPublicKey,
-      ciphertext,
+      ciphertext
     );
 
     // Derive keys - MUST USE EXACT SAME INPUTS AS INITIATOR
     const [sortedKey1, sortedKey2] = this.getSortedKeys(
       localIdentity.kemKeyPair.publicKey,
-      peerBundle.kemPublicKey,
+      peerBundle.kemPublicKey
     );
 
     const combined = concatBytes(
       prekeySecret,
       ciphertext,
       sortedKey1,
-      sortedKey2,
+      sortedKey2
     );
 
     const rootKey = blake3(combined, { dkLen: 32 });
-    const chainKey = blake3(concatBytes(rootKey, new Uint8Array([0])), {
-      dkLen: 32,
-    });
+
+    // Initial chain keys: Responder sends on B, receives on A
+    const sendingChainKey = blake3(
+      concatBytes(rootKey, utf8ToBytes("chain_b")),
+      {
+        dkLen: 32,
+      }
+    );
+    const receivingChainKey = blake3(
+      concatBytes(rootKey, utf8ToBytes("chain_a")),
+      {
+        dkLen: 32,
+      }
+    );
 
     // Generate response confirmation MAC
     const confirmationMac = KemRatchet.generateConfirmationMac(
       sessionId,
       rootKey,
-      chainKey,
-      true,
+      sendingChainKey,
+      true
     );
 
     // Verify initiator's MAC if provided
@@ -184,13 +230,20 @@ export class SessionKeyExchange {
       isValid = KemRatchet.verifyConfirmationMac(
         sessionId,
         rootKey,
-        chainKey,
+        receivingChainKey,
         initiatorConfirmationMac,
-        false,
+        false
       );
     }
 
-    return { sessionId, rootKey, chainKey, confirmationMac, isValid };
+    return {
+      sessionId,
+      rootKey,
+      sendingChainKey,
+      receivingChainKey,
+      confirmationMac,
+      isValid,
+    };
   }
 
   // Verify key confirmation (for initiator to verify responder's MAC)
@@ -198,14 +251,23 @@ export class SessionKeyExchange {
     sessionId: string,
     rootKey: Uint8Array,
     chainKey: Uint8Array,
-    responseMac: Uint8Array,
+    responseMac: Uint8Array
   ): boolean {
     return KemRatchet.verifyConfirmationMac(
       sessionId,
       rootKey,
       chainKey,
       responseMac,
-      true,
+      true
     );
+  }
+
+  // Verify prekey signature
+  private static verifyPreKeySignature(
+    preKey: Uint8Array,
+    signature: Uint8Array,
+    dsaPublicKey: Uint8Array
+  ): boolean {
+    return ml_dsa65.verify(signature, preKey, dsaPublicKey);
   }
 }

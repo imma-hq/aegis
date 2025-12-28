@@ -1,13 +1,12 @@
-// src/quick-test.ts
-import { E2EE, MemoryStorage } from "../src/index.js";
+import { Aegis, MemoryStorage } from "../src/index.js";
 
 async function quickTest() {
   console.log("🔍 Quick E2EE & Replay Protection Test");
   console.log("=".repeat(50));
 
   // Setup
-  const alice = new E2EE(new MemoryStorage());
-  const bob = new E2EE(new MemoryStorage());
+  const alice = new Aegis(new MemoryStorage());
+  const bob = new Aegis(new MemoryStorage());
 
   // Create identities
   console.log("1. Creating identities...");
@@ -32,7 +31,8 @@ async function quickTest() {
 
   // Test normal message flow
   console.log("3. Testing normal message flow...");
-  const testMessage = "Test quantum-safe message with replay protection!";
+  const testMessage =
+    "Any sufficiently advanced technology is indistinguishable from magic ✨. - Arthur C. Clarke";
   const encrypted = await alice.encryptMessage(
     aliceSession.sessionId,
     testMessage,

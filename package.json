@@ -16,10 +16,8 @@
     "build": "npm run clean && tsc --build",
     "clean": "rimraf ./dist",
     "demo": "tsx examples/demo.ts",
-    "sample2": "tsx examples/demo.ts && tsx examples/full-demo.ts",
-    "test": "vitest run",
-    "test:unit": "vitest run test/e2ee.test.ts",
-    "test:performance": "vitest run test/e2ee.bench.ts"
+    "demo:group": "tsx examples/group-demo.ts",
+    "test": "vitest run"
   },
   "repository": {
     "type": "git",

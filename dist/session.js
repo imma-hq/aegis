@@ -1,7 +1,7 @@
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex, concatBytes } from "@noble/hashes/utils.js";
-import { KemRatchet } from "./ratchet.js";
+import { KemRatchet } from "./ratchet";
 export class SessionKeyExchange {
     // Helper: Sort two Uint8Arrays lexicographically and return in consistent order
     static getSortedKeys(key1, key2) {
@@ -52,7 +52,6 @@ export class SessionKeyExchange {
         const confirmationMac = KemRatchet.generateConfirmationMac(sessionId, rootKey, chainKey, false);
         return { sessionId, rootKey, chainKey, ciphertext, confirmationMac };
     }
-    // For responder (Bob): creates session when receiving first message
     static createResponderSession(localIdentity, peerBundle, ciphertext, initiatorConfirmationMac) {
         // Validate inputs
         if (!(ciphertext instanceof Uint8Array)) {
@@ -73,7 +72,6 @@ export class SessionKeyExchange {
         if (!(prekeySecret instanceof Uint8Array)) {
             throw new Error(`ml_kem768.decapsulate returned non-Uint8Array: ${typeof prekeySecret}`);
         }
-        // Create session ID (MUST MATCH INITIATOR)
         const sessionId = this.createSessionId(localIdentity.kemKeyPair.publicKey, peerBundle.kemPublicKey, ciphertext);
         // Derive keys - MUST USE EXACT SAME INPUTS AS INITIATOR
         const [sortedKey1, sortedKey2] = this.getSortedKeys(localIdentity.kemKeyPair.publicKey, peerBundle.kemPublicKey);

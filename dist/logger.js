@@ -12,12 +12,12 @@ export class Logger {
             ];
             sensitiveKeys.forEach((key) => delete safeData[key]);
         }
-        console.log(`[${component}] ${message}`, safeData || "");
+        console.log(`[Aegis:${component}] ${message}`, safeData || "");
     }
     static error(component, message, error) {
-        console.error(`[${component}] ERROR: ${message}`, error || "");
+        console.error(`[Aegis:${component}] ERROR: ${message}`, error || "");
     }
     static warn(component, message, data) {
-        console.warn(`[${component}] WARN: ${message}`, data || "");
+        console.warn(`[Aegis:${component}] WARN: ${message}`, data || "");
     }
 }

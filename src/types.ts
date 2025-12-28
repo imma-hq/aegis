@@ -1,4 +1,3 @@
-// src/types.ts
 export interface Identity {
   kemKeyPair: { publicKey: Uint8Array; secretKey: Uint8Array };
   dsaKeyPair: { publicKey: Uint8Array; secretKey: Uint8Array };
@@ -29,6 +28,16 @@ export interface SkippedMessageKey {
   timestamp: number;
 }
 
+export interface PendingRatchetState {
+  newRootKey: Uint8Array;
+  newRatchetKeyPair: { publicKey: Uint8Array; secretKey: Uint8Array };
+  sendingChain: RatchetChain;
+  receivingChain: RatchetChain;
+  kemCiphertext: Uint8Array;
+  previousReceivingChain: RatchetChain | null;
+  previousSendingChain: RatchetChain | null;
+}
+
 export interface Session {
   sessionId: string;
   peerUserId: string;
@@ -39,7 +48,9 @@ export interface Session {
     secretKey: Uint8Array;
   } | null;
   peerRatchetPublicKey: Uint8Array | null;
-  pendingRatchetCiphertext?: Uint8Array;
+
+  pendingRatchetState?: PendingRatchetState;
+
   sendingChain: RatchetChain | null;
   receivingChain: RatchetChain | null;
   previousSendingChainLength: number;
@@ -54,10 +65,19 @@ export interface Session {
   confirmed: boolean;
   confirmationMac?: Uint8Array;
 
-  // Simple replay protection
-  receivedMessageIds: Set<string>; // Store last N message IDs
-  replayWindowSize: number; // Allow messages N numbers behind
-  lastProcessedTimestamp: number; // Last valid message timestamp
+  receivedMessageIds: Set<string>;
+  replayWindowSize: number;
+  lastProcessedTimestamp: number;
+
+  groupData?: {
+    name: string;
+    members: string[];
+    owner: string;
+    memberKeys: [string, Uint8Array][];
+    memberPublicKeys: [string, Uint8Array][]; // KEM public keys for key encryption
+    memberDsaPublicKeys?: [string, Uint8Array][]; // DSA public keys for signature verification
+    receivedMessageNumbers?: [string, number][];
+  };
 }
 
 export interface MessageHeader {
@@ -67,7 +87,7 @@ export interface MessageHeader {
   previousChainLength: number;
   kemCiphertext?: Uint8Array;
   isRatchetMessage?: boolean;
-  timestamp: number; // Simple timestamp for freshness
+  timestamp: number;
 }
 
 export interface EncryptedMessage {
@@ -100,4 +120,72 @@ export interface KeyConfirmationData {
   sessionId: string;
   mac: Uint8Array;
   timestamp: number;
+}
+
+export interface Group {
+  groupId: string;
+  name: string;
+  members: string[];
+  sharedKey: Uint8Array;
+  createdAt: number;
+  lastUpdated: number;
+  owner: string;
+  memberKeys: Map<string, Uint8Array>;
+  memberPublicKeys: Map<string, Uint8Array>; // KEM public keys for key encryption
+  memberDsaPublicKeys: Map<string, Uint8Array>; // DSA public keys for signature verification
+  receivedMessageNumbers: Map<string, number>;
+}
+
+export interface GroupMessage {
+  groupId: string;
+  message: Uint8Array;
+  header: GroupMessageHeader;
+  signature: Uint8Array;
+}
+
+export interface GroupMessageHeader {
+  messageId: string;
+  timestamp: number;
+  senderId: string;
+  messageNumber: number;
+}
+
+export interface GroupSession {
+  sessionId: string;
+  groupId: string;
+  userId: string;
+  sharedKey: Uint8Array;
+  lastUsed: number;
+  permissions: GroupPermissions;
+}
+
+export interface GroupPermissions {
+  canSend: boolean;
+  canReceive: boolean;
+  canManageMembers: boolean;
+  canUpdateGroup: boolean;
+}
+
+export interface GroupManager {
+  createGroup(
+    name: string,
+    members: string[],
+    memberKemPublicKeys: Map<string, Uint8Array>,
+    memberDsaPublicKeys: Map<string, Uint8Array>
+  ): Promise<Group>;
+  addMember(
+    groupId: string,
+    userId: string,
+    session: Session,
+    userPublicKey: Uint8Array
+  ): Promise<void>;
+  removeMember(groupId: string, userId: string): Promise<void>;
+  updateGroupKey(groupId: string): Promise<void>;
+  encryptMessage(
+    groupId: string,
+    message: string | Uint8Array
+  ): Promise<GroupMessage>;
+  decryptMessage(groupId: string, encrypted: GroupMessage): Promise<Uint8Array>;
+  getGroup(groupId: string): Promise<Group | null>;
+  getGroups(): Promise<Group[]>;
 }

@@ -31,11 +31,11 @@ export class KemRatchet {
   // Perform KEM ratchet as encapsulator (when we send a new ratchet key)
   static performKemRatchetEncapsulate(
     rootKey: Uint8Array,
-    peerRatchetPublicKey: Uint8Array,
+    peerRatchetPublicKey: Uint8Array
   ): KemRatchetResult {
     if (!peerRatchetPublicKey) {
       throw new Error(
-        "peerRatchetPublicKey is required for KEM ratchet encapsulation",
+        "peerRatchetPublicKey is required for KEM ratchet encapsulation"
       );
     }
 
@@ -55,20 +55,20 @@ export class KemRatchet {
     const newRootKey = this.deriveKey(
       rootKey,
       sharedSecret,
-      this.CONTEXT_ROOT_KEY,
+      this.CONTEXT_ROOT_KEY
     );
 
     // Derive sending and receiving chain keys
     const sendingChainKey = this.deriveKey(
       newRootKey,
       cipherText,
-      this.CONTEXT_CHAIN_KEY,
+      this.CONTEXT_CHAIN_KEY
     );
 
     const receivingChainKey = this.deriveKey(
       newRootKey,
       sharedSecret,
-      this.CONTEXT_CHAIN_KEY,
+      this.CONTEXT_CHAIN_KEY
     );
 
     return {
@@ -90,7 +90,7 @@ export class KemRatchet {
   static performKemRatchetDecapsulate(
     rootKey: Uint8Array,
     kemCiphertext: Uint8Array,
-    currentRatchetSecretKey: Uint8Array,
+    currentRatchetSecretKey: Uint8Array
   ): KemRatchetResult {
     if (!kemCiphertext || kemCiphertext.length === 0) {
       throw new Error("KEM ciphertext is required for decapsulation");
@@ -99,7 +99,7 @@ export class KemRatchet {
     // Decapsulate the KEM cipherText using our current secret key
     const sharedSecret = ml_kem768.decapsulate(
       kemCiphertext,
-      currentRatchetSecretKey,
+      currentRatchetSecretKey
     );
 
     // Generate new ratchet keypair for next round
@@ -109,20 +109,20 @@ export class KemRatchet {
     const newRootKey = this.deriveKey(
       rootKey,
       sharedSecret,
-      this.CONTEXT_ROOT_KEY,
+      this.CONTEXT_ROOT_KEY
     );
 
     // Derive chain keys (roles are swapped compared to encapsulator)
     const sendingChainKey = this.deriveKey(
       newRootKey,
       sharedSecret,
-      this.CONTEXT_CHAIN_KEY,
+      this.CONTEXT_CHAIN_KEY
     );
 
     const receivingChainKey = this.deriveKey(
       newRootKey,
       kemCiphertext,
-      this.CONTEXT_CHAIN_KEY,
+      this.CONTEXT_CHAIN_KEY
     );
 
     return {
@@ -145,7 +145,7 @@ export class KemRatchet {
     sessionId: string,
     rootKey: Uint8Array,
     chainKey: Uint8Array,
-    isResponse: boolean = false,
+    isResponse: boolean = false
   ): Uint8Array {
     const context = isResponse
       ? new Uint8Array([0x06]) // Different context for response
@@ -155,7 +155,7 @@ export class KemRatchet {
       new TextEncoder().encode(sessionId),
       rootKey,
       chainKey,
-      new Uint8Array([isResponse ? 1 : 0]),
+      new Uint8Array([isResponse ? 1 : 0])
     );
 
     return this.deriveKey(rootKey, data, context);
@@ -167,13 +167,13 @@ export class KemRatchet {
     rootKey: Uint8Array,
     chainKey: Uint8Array,
     receivedMac: Uint8Array,
-    isResponse: boolean = false,
+    isResponse: boolean = false
   ): boolean {
     const expectedMac = this.generateConfirmationMac(
       sessionId,
       rootKey,
       chainKey,
-      isResponse,
+      isResponse
     );
 
     // Constant-time comparison
@@ -195,15 +195,15 @@ export class KemRatchet {
     // Derive message key from current chain key
     const messageKey = this.deriveKey(
       chain.chainKey,
-      new Uint8Array([chain.messageNumber]),
-      this.CONTEXT_MESSAGE_KEY,
+      new Uint8Array([0x00]),
+      this.CONTEXT_MESSAGE_KEY
     );
 
     // Derive new chain key
     const newChainKey = this.deriveKey(
       chain.chainKey,
       new Uint8Array([0x01]),
-      this.CONTEXT_CHAIN_KEY,
+      this.CONTEXT_CHAIN_KEY
     );
 
     const newChain: RatchetChain = {
@@ -218,7 +218,7 @@ export class KemRatchet {
   static skipMessageKeys(
     chain: RatchetChain,
     targetMessageNumber: number,
-    maxSkip: number,
+    maxSkip: number
   ): { skippedKeys: Map<number, Uint8Array>; newChain: RatchetChain } {
     const skippedKeys = new Map<number, Uint8Array>();
 
@@ -247,7 +247,7 @@ export class KemRatchet {
   private static deriveKey(
     key: Uint8Array,
     data: Uint8Array,
-    context: Uint8Array,
+    context: Uint8Array
   ): Uint8Array {
     return blake3(concatBytes(key, data, context), { dkLen: 32 });
   }
@@ -265,7 +265,7 @@ export class KemRatchet {
     messageCount: number,
     lastRatchetTime: number,
     maxMessages: number = 100,
-    maxTime: number = 7 * 24 * 60 * 60 * 1000, // 7 days
+    maxTime: number = 7 * 24 * 60 * 60 * 1000 // 7 days
   ): boolean {
     const now = Date.now();
     return messageCount >= maxMessages || now - lastRatchetTime >= maxTime;

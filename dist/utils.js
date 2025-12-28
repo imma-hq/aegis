@@ -1,4 +1,3 @@
-// src/utils.ts
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex, concatBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 export function deriveMessageKey(chainKey) {

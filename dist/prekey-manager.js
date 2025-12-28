@@ -1,4 +1,3 @@
-// src/prekey-manager.ts
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 export class PreKeyManager {

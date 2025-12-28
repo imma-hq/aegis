@@ -24,6 +24,7 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": false,
+    "downlevelIteration": true,
 
     "paths": {
       "@/*": ["./src/*"],

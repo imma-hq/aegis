@@ -1,7 +1,7 @@
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { concatBytes } from "@noble/hashes/utils.js";
-import { ML_KEM768_PUBLIC_KEY_LENGTH } from "./constants.js";
+import { ML_KEM768_PUBLIC_KEY_LENGTH } from "./constants";
 export class KemRatchet {
     // Perform KEM ratchet as encapsulator (when we send a new ratchet key)
     static performKemRatchetEncapsulate(rootKey, peerRatchetPublicKey) {

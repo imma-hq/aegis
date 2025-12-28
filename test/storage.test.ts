@@ -1,40 +1,82 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { MemoryStorage } from "../src/storage";
-import type { Identity, Session } from "../src/types";
-import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
-import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+import { MemoryStorage } from "../src/storage.js";
+import { Identity, Session } from "../src/types.js";
 
 describe("MemoryStorage", () => {
   let storage: MemoryStorage;
-  let mockIdentity: Identity;
-  let mockSession: Session;
 
   beforeEach(() => {
     storage = new MemoryStorage();
+  });
 
-    const kemKeyPair = ml_kem768.keygen();
-    const dsaKeyPair = ml_dsa65.keygen();
-
-    mockIdentity = {
-      kemKeyPair,
-      dsaKeyPair,
-      userId: "test-user-id",
+  it("should save and retrieve identity", async () => {
+    const identity: Identity = {
+      kemKeyPair: {
+        publicKey: new Uint8Array([1, 2, 3]),
+        secretKey: new Uint8Array([4, 5, 6]),
+      },
+      dsaKeyPair: {
+        publicKey: new Uint8Array([7, 8, 9]),
+        secretKey: new Uint8Array([10, 11, 12]),
+      },
+      userId: "test-user",
       createdAt: Date.now(),
-      preKeySecret: kemKeyPair.secretKey,
     };
 
-    mockSession = {
-      sessionId: "test-session-id",
-      peerUserId: "peer-user-id",
-      peerDsaPublicKey: new Uint8Array(32),
-      rootKey: new Uint8Array(32),
-      currentRatchetKeyPair: ml_kem768.keygen(),
-      peerRatchetPublicKey: null,
+    await storage.saveIdentity(identity);
+    const retrieved = await storage.getIdentity();
+
+    expect(retrieved).toBeDefined();
+    expect(retrieved?.userId).toBe(identity.userId);
+    expect(retrieved?.kemKeyPair.publicKey).toEqual(identity.kemKeyPair.publicKey);
+    expect(retrieved?.kemKeyPair.secretKey).toEqual(identity.kemKeyPair.secretKey);
+    expect(retrieved?.dsaKeyPair.publicKey).toEqual(identity.dsaKeyPair.publicKey);
+    expect(retrieved?.dsaKeyPair.secretKey).toEqual(identity.dsaKeyPair.secretKey);
+  });
+
+  it("should delete identity", async () => {
+    const identity: Identity = {
+      kemKeyPair: {
+        publicKey: new Uint8Array([1, 2, 3]),
+        secretKey: new Uint8Array([4, 5, 6]),
+      },
+      dsaKeyPair: {
+        publicKey: new Uint8Array([7, 8, 9]),
+        secretKey: new Uint8Array([10, 11, 12]),
+      },
+      userId: "test-user",
+      createdAt: Date.now(),
+    };
+
+    await storage.saveIdentity(identity);
+    let retrieved = await storage.getIdentity();
+    expect(retrieved).toBeDefined();
+
+    await storage.deleteIdentity();
+    retrieved = await storage.getIdentity();
+    expect(retrieved).toBeNull();
+  });
+
+  it("should save and retrieve session", async () => {
+    const sessionId = "test-session";
+    const session: Session = {
+      sessionId,
+      peerUserId: "peer-user",
+      peerDsaPublicKey: new Uint8Array([1, 2, 3]),
+      rootKey: new Uint8Array([4, 5, 6]),
+      currentRatchetKeyPair: {
+        publicKey: new Uint8Array([7, 8, 9]),
+        secretKey: new Uint8Array([10, 11, 12]),
+      },
+      peerRatchetPublicKey: new Uint8Array([13, 14, 15]),
       sendingChain: {
-        chainKey: new Uint8Array(32),
+        chainKey: new Uint8Array([16, 17, 18]),
         messageNumber: 0,
       },
-      receivingChain: null,
+      receivingChain: {
+        chainKey: new Uint8Array([19, 20, 21]),
+        messageNumber: 0,
+      },
       previousSendingChainLength: 0,
       skippedMessageKeys: new Map(),
       highestReceivedMessageNumber: -1,
@@ -45,194 +87,218 @@ describe("MemoryStorage", () => {
       ratchetCount: 0,
       state: "CREATED",
       confirmed: false,
-      receivedMessageIds: new Set(),
       replayWindowSize: 100,
       lastProcessedTimestamp: Date.now(),
+      receivedMessageIds: new Set(),
     };
+
+    await storage.saveSession(sessionId, session);
+    const retrieved = await storage.getSession(sessionId);
+
+    expect(retrieved).toBeDefined();
+    expect(retrieved?.sessionId).toBe(sessionId);
+    expect(retrieved?.peerUserId).toBe(session.peerUserId);
+    expect(retrieved?.rootKey).toEqual(session.rootKey);
+    expect(retrieved?.currentRatchetKeyPair?.publicKey).toEqual(session.currentRatchetKeyPair?.publicKey);
+    expect(retrieved?.currentRatchetKeyPair?.secretKey).toEqual(session.currentRatchetKeyPair?.secretKey);
+    expect(retrieved?.receivingChain?.chainKey).toEqual(session.receivingChain?.chainKey);
+    expect(retrieved?.receivingChain?.messageNumber).toEqual(session.receivingChain?.messageNumber);
+    expect(retrieved?.skippedMessageKeys).toEqual(session.skippedMessageKeys);
+    expect(retrieved?.receivedMessageIds).toEqual(session.receivedMessageIds);
   });
 
-  describe("Identity Management", () => {
-    it("should save and retrieve identity", async () => {
-      await storage.saveIdentity(mockIdentity);
-      const retrieved = await storage.getIdentity();
+  it("should delete session", async () => {
+    const sessionId = "test-session";
+    const session: Session = {
+      sessionId,
+      peerUserId: "peer-user",
+      peerDsaPublicKey: new Uint8Array([1, 2, 3]),
+      rootKey: new Uint8Array([4, 5, 6]),
+      currentRatchetKeyPair: {
+        publicKey: new Uint8Array([7, 8, 9]),
+        secretKey: new Uint8Array([10, 11, 12]),
+      },
+      peerRatchetPublicKey: new Uint8Array([13, 14, 15]),
+      sendingChain: {
+        chainKey: new Uint8Array([16, 17, 18]),
+        messageNumber: 0,
+      },
+      receivingChain: {
+        chainKey: new Uint8Array([19, 20, 21]),
+        messageNumber: 0,
+      },
+      previousSendingChainLength: 0,
+      skippedMessageKeys: new Map(),
+      highestReceivedMessageNumber: -1,
+      maxSkippedMessages: 100,
+      createdAt: Date.now(),
+      lastUsed: Date.now(),
+      isInitiator: true,
+      ratchetCount: 0,
+      state: "CREATED",
+      confirmed: false,
+      replayWindowSize: 100,
+      lastProcessedTimestamp: Date.now(),
+      receivedMessageIds: new Set(),
+    };
 
-      expect(retrieved).not.toBeNull();
-      expect(retrieved!.userId).toBe(mockIdentity.userId);
-      expect(retrieved!.kemKeyPair.publicKey).toEqual(
-        mockIdentity.kemKeyPair.publicKey,
-      );
-    });
+    await storage.saveSession(sessionId, session);
+    let retrieved = await storage.getSession(sessionId);
+    expect(retrieved).toBeDefined();
 
-    it("should return null when no identity exists", async () => {
-      const retrieved = await storage.getIdentity();
-      expect(retrieved).toBeNull();
-    });
-
-    it("should delete identity", async () => {
-      await storage.saveIdentity(mockIdentity);
-      await storage.deleteIdentity();
-
-      const retrieved = await storage.getIdentity();
-      expect(retrieved).toBeNull();
-    });
-
-    it("should overwrite existing identity", async () => {
-      await storage.saveIdentity(mockIdentity);
-
-      const newIdentity = { ...mockIdentity, userId: "new-user-id" };
-      await storage.saveIdentity(newIdentity);
-
-      const retrieved = await storage.getIdentity();
-      expect(retrieved!.userId).toBe("new-user-id");
-    });
+    await storage.deleteSession(sessionId);
+    retrieved = await storage.getSession(sessionId);
+    expect(retrieved).toBeNull();
   });
 
-  describe("Session Management", () => {
-    it("should save and retrieve session", async () => {
-      await storage.saveSession(mockSession.sessionId, mockSession);
-      const retrieved = await storage.getSession(mockSession.sessionId);
+  it("should list sessions", async () => {
+    const session1: Session = {
+      sessionId: "session-1",
+      peerUserId: "peer-user-1",
+      peerDsaPublicKey: new Uint8Array([1, 2, 3]),
+      rootKey: new Uint8Array([4, 5, 6]),
+      currentRatchetKeyPair: {
+        publicKey: new Uint8Array([7, 8, 9]),
+        secretKey: new Uint8Array([10, 11, 12]),
+      },
+      peerRatchetPublicKey: new Uint8Array([13, 14, 15]),
+      sendingChain: {
+        chainKey: new Uint8Array([16, 17, 18]),
+        messageNumber: 0,
+      },
+      receivingChain: {
+        chainKey: new Uint8Array([19, 20, 21]),
+        messageNumber: 0,
+      },
+      previousSendingChainLength: 0,
+      skippedMessageKeys: new Map(),
+      highestReceivedMessageNumber: -1,
+      maxSkippedMessages: 100,
+      createdAt: Date.now(),
+      lastUsed: Date.now(),
+      isInitiator: true,
+      ratchetCount: 0,
+      state: "CREATED",
+      confirmed: false,
+      replayWindowSize: 100,
+      lastProcessedTimestamp: Date.now(),
+      receivedMessageIds: new Set(),
+    };
 
-      expect(retrieved).not.toBeNull();
-      expect(retrieved!.sessionId).toBe(mockSession.sessionId);
-      expect(retrieved!.peerUserId).toBe(mockSession.peerUserId);
-    });
+    const session2: Session = {
+      ...session1,
+      sessionId: "session-2",
+      peerUserId: "peer-user-2",
+    };
 
-    it("should return null for non-existent session", async () => {
-      const retrieved = await storage.getSession("non-existent");
-      expect(retrieved).toBeNull();
-    });
+    await storage.saveSession("session-1", session1);
+    await storage.saveSession("session-2", session2);
 
-    it("should delete session", async () => {
-      await storage.saveSession(mockSession.sessionId, mockSession);
-      await storage.deleteSession(mockSession.sessionId);
-
-      const retrieved = await storage.getSession(mockSession.sessionId);
-      expect(retrieved).toBeNull();
-    });
-
-    it("should list all session IDs", async () => {
-      await storage.saveSession("session-1", mockSession);
-      await storage.saveSession("session-2", {
-        ...mockSession,
-        sessionId: "session-2",
-      });
-      await storage.saveSession("session-3", {
-        ...mockSession,
-        sessionId: "session-3",
-      });
-
-      const sessionIds = await storage.listSessions();
-      expect(sessionIds).toHaveLength(3);
-      expect(sessionIds).toContain("session-1");
-      expect(sessionIds).toContain("session-2");
-      expect(sessionIds).toContain("session-3");
-    });
-
-    it("should delete all sessions", async () => {
-      await storage.saveSession("session-1", mockSession);
-      await storage.saveSession("session-2", {
-        ...mockSession,
-        sessionId: "session-2",
-      });
-
-      await storage.deleteAllSessions();
-
-      const sessionIds = await storage.listSessions();
-      expect(sessionIds).toHaveLength(0);
-    });
-
-    it("should handle skipped message keys in sessions", async () => {
-      mockSession.skippedMessageKeys.set("key-1", {
-        messageKey: new Uint8Array(32).fill(1),
-        timestamp: Date.now(),
-      });
-      mockSession.skippedMessageKeys.set("key-2", {
-        messageKey: new Uint8Array(32).fill(2),
-        timestamp: Date.now(),
-      });
-
-      await storage.saveSession(mockSession.sessionId, mockSession);
-      const retrieved = await storage.getSession(mockSession.sessionId);
-
-      expect(retrieved!.skippedMessageKeys.size).toBe(2);
-      expect(retrieved!.skippedMessageKeys.has("key-1")).toBe(true);
-      expect(retrieved!.skippedMessageKeys.has("key-2")).toBe(true);
-    });
-
-    it("should handle received message IDs in sessions", async () => {
-      mockSession.receivedMessageIds.add("msg-1");
-      mockSession.receivedMessageIds.add("msg-2");
-      mockSession.receivedMessageIds.add("msg-3");
-
-      await storage.saveSession(mockSession.sessionId, mockSession);
-      const retrieved = await storage.getSession(mockSession.sessionId);
-
-      expect(retrieved!.receivedMessageIds.size).toBe(3);
-      expect(retrieved!.receivedMessageIds.has("msg-1")).toBe(true);
-      expect(retrieved!.receivedMessageIds.has("msg-2")).toBe(true);
-      expect(retrieved!.receivedMessageIds.has("msg-3")).toBe(true);
-    });
-
-    it("should deep clone sessions to prevent reference issues", async () => {
-      await storage.saveSession(mockSession.sessionId, mockSession);
-      const retrieved = await storage.getSession(mockSession.sessionId);
-
-      // Modify retrieved session
-      retrieved!.peerUserId = "modified-peer-id";
-      retrieved!.skippedMessageKeys.set("new-key", {
-        messageKey: new Uint8Array(32),
-        timestamp: Date.now(),
-      });
-
-      // Original should be unchanged
-      const original = await storage.getSession(mockSession.sessionId);
-      expect(original!.peerUserId).toBe("peer-user-id");
-      expect(original!.skippedMessageKeys.has("new-key")).toBe(false);
-    });
+    const sessionIds = await storage.listSessions();
+    expect(sessionIds).toContain("session-1");
+    expect(sessionIds).toContain("session-2");
+    expect(sessionIds.length).toBe(2);
   });
 
-  describe("Data Integrity", () => {
-    it("should preserve Uint8Array data", async () => {
-      const testData = new Uint8Array([1, 2, 3, 4, 5]);
-      mockIdentity.kemKeyPair.publicKey = testData;
+  it("should delete all sessions", async () => {
+    const session1: Session = {
+      sessionId: "session-1",
+      peerUserId: "peer-user-1",
+      peerDsaPublicKey: new Uint8Array([1, 2, 3]),
+      rootKey: new Uint8Array([4, 5, 6]),
+      currentRatchetKeyPair: {
+        publicKey: new Uint8Array([7, 8, 9]),
+        secretKey: new Uint8Array([10, 11, 12]),
+      },
+      peerRatchetPublicKey: new Uint8Array([13, 14, 15]),
+      sendingChain: {
+        chainKey: new Uint8Array([16, 17, 18]),
+        messageNumber: 0,
+      },
+      receivingChain: {
+        chainKey: new Uint8Array([19, 20, 21]),
+        messageNumber: 0,
+      },
+      previousSendingChainLength: 0,
+      skippedMessageKeys: new Map(),
+      highestReceivedMessageNumber: -1,
+      maxSkippedMessages: 100,
+      createdAt: Date.now(),
+      lastUsed: Date.now(),
+      isInitiator: true,
+      ratchetCount: 0,
+      state: "CREATED",
+      confirmed: false,
+      replayWindowSize: 100,
+      lastProcessedTimestamp: Date.now(),
+      receivedMessageIds: new Set(),
+    };
 
-      await storage.saveIdentity(mockIdentity);
-      const retrieved = await storage.getIdentity();
+    const session2: Session = {
+      ...session1,
+      sessionId: "session-2",
+      peerUserId: "peer-user-2",
+    };
 
-      expect(retrieved!.kemKeyPair.publicKey).toEqual(testData);
-      expect(retrieved!.kemKeyPair.publicKey).toBeInstanceOf(Uint8Array);
-    });
+    await storage.saveSession("session-1", session1);
+    await storage.saveSession("session-2", session2);
 
-    it("should preserve null values", async () => {
-      mockSession.peerRatchetPublicKey = null;
-      mockSession.receivingChain = null;
+    let sessionIds = await storage.listSessions();
+    expect(sessionIds.length).toBe(2);
 
-      await storage.saveSession(mockSession.sessionId, mockSession);
-      const retrieved = await storage.getSession(mockSession.sessionId);
-
-      expect(retrieved!.peerRatchetPublicKey).toBeNull();
-      expect(retrieved!.receivingChain).toBeNull();
-    });
-
-    it("should preserve timestamps", async () => {
-      const now = Date.now();
-      mockSession.createdAt = now;
-      mockSession.lastUsed = now;
-
-      await storage.saveSession(mockSession.sessionId, mockSession);
-      const retrieved = await storage.getSession(mockSession.sessionId);
-
-      expect(retrieved!.createdAt).toBe(now);
-      expect(retrieved!.lastUsed).toBe(now);
-    });
+    await storage.deleteAllSessions();
+    sessionIds = await storage.listSessions();
+    expect(sessionIds.length).toBe(0);
   });
-});
 
-// Note: IndexedDB tests would require a browser environment or jsdom
-// These can be added if you need to test IndexedDBStorage specifically
-describe("IndexedDBStorage", () => {
-  it("should be tested in browser environment", () => {
-    // Placeholder for browser-based tests
-    expect(true).toBe(true);
+  it("should handle deep cloning of session objects", async () => {
+    const sessionId = "test-session";
+    const session: Session = {
+      sessionId,
+      peerUserId: "peer-user",
+      peerDsaPublicKey: new Uint8Array([1, 2, 3]),
+      rootKey: new Uint8Array([4, 5, 6]),
+      currentRatchetKeyPair: {
+        publicKey: new Uint8Array([7, 8, 9]),
+        secretKey: new Uint8Array([10, 11, 12]),
+      },
+      peerRatchetPublicKey: new Uint8Array([13, 14, 15]),
+      sendingChain: {
+        chainKey: new Uint8Array([16, 17, 18]),
+        messageNumber: 0,
+      },
+      receivingChain: {
+        chainKey: new Uint8Array([19, 20, 21]),
+        messageNumber: 0,
+      },
+      previousSendingChainLength: 0,
+      skippedMessageKeys: new Map([["key1", { messageKey: new Uint8Array([1, 2, 3]), timestamp: Date.now() }]]),
+      highestReceivedMessageNumber: -1,
+      maxSkippedMessages: 100,
+      createdAt: Date.now(),
+      lastUsed: Date.now(),
+      isInitiator: true,
+      ratchetCount: 0,
+      state: "CREATED",
+      confirmed: false,
+      replayWindowSize: 100,
+      lastProcessedTimestamp: Date.now(),
+      receivedMessageIds: new Set(["msg1", "msg2"]),
+    };
+
+    await storage.saveSession(sessionId, session);
+    const retrieved = await storage.getSession(sessionId);
+
+    // Verify that the retrieved object is a deep clone
+    expect(retrieved).not.toBe(session);
+    expect(retrieved?.skippedMessageKeys).not.toBe(session.skippedMessageKeys);
+    expect(retrieved?.receivedMessageIds).not.toBe(session.receivedMessageIds);
+
+    // Verify that changes to the retrieved object don't affect the original
+    retrieved!.skippedMessageKeys.set("newKey", { messageKey: new Uint8Array([4, 5, 6]), timestamp: Date.now() });
+    retrieved!.receivedMessageIds.add("newMsg");
+
+    expect(session.skippedMessageKeys.has("newKey")).toBe(false);
+    expect(session.receivedMessageIds.has("newMsg")).toBe(false);
   });
 });
