@@ -9,7 +9,7 @@
 
 ## **Core Features**
 
-- **Post-Quantum Ready**: Uses **ML-KEM 768 (formerly Kyber)** for initial key encapsulation, aligning with NIST standards.
+- **Post-Quantum Ready**: Uses **ML-KEM 768** for initial key encapsulation, aligning with NIST standards.
 - **Storage-Agnostic**: You provide a simple key-value storage adapter (e.g., AsyncStorage, LocalStorage, SQLite, SecureStore).
 - **Modern Cryptography**: Symmetric ratchets for forward secrecy and Sender Keys for O(1) group encryption.
 - **Enhanced Security**: Implements proper group key encryption, pre-key signature verification, and secure group membership protocols.
@@ -231,7 +231,7 @@ console.log(new TextDecoder().decode(groupPlaintext)); // "Dinner at 8 PM!"
 
 Aegis is built on a hybrid model:
 
-1.  **Key Agreement**: **ML-KEM 768 (Kyber)** provides quantum-resistant key encapsulation. This algorithm is now a finalized NIST standard (FIPS 203).
+1.  **Key Agreement**: **ML-KEM 768** provides quantum-resistant key encapsulation. This algorithm is now a finalized NIST standard (FIPS 203).
 2.  **Data Encryption**: **ChaCha20-Poly1305** is used for fast, authenticated encryption of message contents.
 3.  **Key Derivation & Hashing**: **Blake3** is used for key derivation and hashing, providing high speed and security.
 
