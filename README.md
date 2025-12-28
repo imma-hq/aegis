@@ -4,6 +4,9 @@
 
 ---
 
+![git workflow](https://github.com/imma-hq/aegis/actions/workflows/ci.yml/badge.svg?branch=main)
+![NPM Version](https://img.shields.io/npm/v/@immahq/aegis)
+
 ## **Core Features**
 
 - **Post-Quantum Ready**: Uses **ML-KEM 768 (formerly Kyber)** for initial key encapsulation, aligning with NIST standards.
@@ -13,9 +16,6 @@
 - **Minimal Dependencies**: Relies on robust, well-audited libraries like `@noble/curves` and `@noble/hashes`.
 
 ---
-
-![git workflow](https://github.com/imma-hq/aegis/actions/workflows/ci.yml/badge.svg?branch=main)
-![NPM Version](https://img.shields.io/npm/v/@immahq/aegis)
 
 ## **Installation**
 
