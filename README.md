@@ -1,11 +1,11 @@
-# **Aegis**
+# **Aegis** 
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/68e739263f9740b3be6693e795d17d0a)](https://app.codacy.com/gh/imma-hq/aegis/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)![git workflow](https://github.com/imma-hq/aegis/actions/workflows/ci.yml/badge.svg?branch=main)
+![NPM Version](https://img.shields.io/npm/v/@immahq/aegis)
 
 **Aegis** is a lightweight, storage-agnostic library for client-side End-to-End (E2E) encryption, designed for future security. It combines the NIST-standardized ML-KEM 768 algorithm for quantum-resistant key agreement with high-performance symmetric cryptography (ChaCha20-Poly1305, Blake3) to provide secure 1:1 sessions and scalable group messaging.
 
 ---
 
-![git workflow](https://github.com/imma-hq/aegis/actions/workflows/ci.yml/badge.svg?branch=main)
-![NPM Version](https://img.shields.io/npm/v/@immahq/aegis)
 
 ## **Core Features**
 
