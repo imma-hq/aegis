@@ -58,7 +58,6 @@ export class E2EE {
         this.groupManager = new GroupManager(storage);
         Logger.log("E2EE", "Initialized with storage adapter");
     }
-    // Identity Management
     async createIdentity() {
         return this.identityManager.createIdentity();
     }
@@ -71,7 +70,6 @@ export class E2EE {
     async rotateIdentity() {
         return this.identityManager.rotateIdentity();
     }
-    // Session Management
     async createSession(peerBundle) {
         const identity = await this.identityManager.getIdentity();
         return this.sessionManager.createSession(identity, peerBundle);
@@ -89,9 +87,7 @@ export class E2EE {
     async cleanupOldSessions(maxAge) {
         return this.sessionManager.cleanupOldSessions(maxAge);
     }
-    // Message Encryption/Decryption
     async encryptMessage(sessionId, plaintext) {
-        // Check if session exists first to throw SESSION_NOT_FOUND before IDENTITY_NOT_FOUND
         const session = await this.storage.getSession(sessionId);
         if (!session)
             throw new Error("Session not found");
@@ -108,7 +104,6 @@ export class E2EE {
         return this.cryptoManager.encryptMessage(sessionId, plaintext, identity, shouldRatchet, performSendingRatchet, updateSessionState);
     }
     async decryptMessage(sessionId, encrypted) {
-        // Check if session exists first to throw SESSION_NOT_FOUND before other errors
         const session = await this.storage.getSession(sessionId);
         if (!session)
             throw new Error("Session not found");
@@ -127,12 +122,17 @@ export class E2EE {
         const cleanupSkippedKeys = (session) => {
             this.replayProtection.cleanupSkippedKeys(session);
         };
+        const applyPendingRatchet = (session) => {
+            return this.ratchetManager.applyPendingRatchet(session);
+        };
+        const getDecryptionChainForRatchetMessage = (session) => {
+            return this.ratchetManager.getDecryptionChainForRatchetMessage(session);
+        };
         const updateSessionState = async (sessionId, session) => {
             await this.storage.saveSession(sessionId, session);
         };
-        return this.cryptoManager.decryptMessage(sessionId, encrypted, needsReceivingRatchet, performReceivingRatchet, getSkippedKeyId, storeReceivedMessageId, cleanupSkippedKeys, updateSessionState);
+        return this.cryptoManager.decryptMessage(sessionId, encrypted, needsReceivingRatchet, performReceivingRatchet, getSkippedKeyId, storeReceivedMessageId, cleanupSkippedKeys, applyPendingRatchet, getDecryptionChainForRatchetMessage, updateSessionState);
     }
-    // Ratchet Management
     async triggerRatchet(sessionId) {
         const session = await this.storage.getSession(sessionId);
         if (!session)
@@ -140,14 +140,12 @@ export class E2EE {
         const updatedSession = await this.ratchetManager.triggerRatchet(sessionId, session);
         await this.storage.saveSession(sessionId, updatedSession);
     }
-    // Replay Protection
     async getReplayProtectionStatus(sessionId) {
         const session = await this.storage.getSession(sessionId);
         if (!session)
             throw new Error("Session not found");
         return this.replayProtection.getReplayProtectionStatus(sessionId, session);
     }
-    // Get confirmation MAC for responder to send back to initiator
     async getConfirmationMac(sessionId) {
         const session = await this.storage.getSession(sessionId);
         if (!session || !session.confirmationMac) {
@@ -155,20 +153,22 @@ export class E2EE {
         }
         return session.confirmationMac;
     }
-    // Group Management
-    async createGroup(name, members) {
-        const identity = await this.identityManager.getIdentity();
-        if (!identity)
-            throw new Error("Identity not found");
-        await this.groupManager.initialize(identity);
-        return this.groupManager.createGroup(name, members);
+    getStorage() {
+        return this.storage;
     }
-    async addGroupMember(groupId, userId, session) {
+    async createGroup(name, members, memberKemPublicKeys, memberDsaPublicKeys) {
         const identity = await this.identityManager.getIdentity();
         if (!identity)
             throw new Error("Identity not found");
         await this.groupManager.initialize(identity);
-        return this.groupManager.addMember(groupId, userId, session);
+        return this.groupManager.createGroup(name, members, memberKemPublicKeys, memberDsaPublicKeys);
+    }
+    async addGroupMember(groupId, userId, session, userPublicKey) {
+        const identity = await this.identityManager.getIdentity();
+        if (!identity)
+            throw new Error("Identity not found");
+        await this.groupManager.initialize(identity);
+        return this.groupManager.addMember(groupId, userId, session, userPublicKey);
     }
     async removeGroupMember(groupId, userId) {
         const identity = await this.identityManager.getIdentity();

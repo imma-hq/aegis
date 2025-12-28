@@ -86,7 +86,7 @@ export class KemRatchet {
     // Symmetric ratchet for deriving message keys within a chain
     static symmetricRatchet(chain) {
         // Derive message key from current chain key
-        const messageKey = this.deriveKey(chain.chainKey, new Uint8Array([chain.messageNumber]), this.CONTEXT_MESSAGE_KEY);
+        const messageKey = this.deriveKey(chain.chainKey, new Uint8Array([0x00]), this.CONTEXT_MESSAGE_KEY);
         // Derive new chain key
         const newChainKey = this.deriveKey(chain.chainKey, new Uint8Array([0x01]), this.CONTEXT_CHAIN_KEY);
         const newChain = {
@@ -123,7 +123,8 @@ export class KemRatchet {
         return ml_kem768.keygen();
     }
     // Check if we should perform a KEM ratchet
-    static shouldPerformRatchet(messageCount, lastRatchetTime, maxMessages = 100, maxTime = 7 * 24 * 60 * 60 * 1000) {
+    static shouldPerformRatchet(messageCount, lastRatchetTime, maxMessages = 100, maxTime = 7 * 24 * 60 * 60 * 1000 // 7 days
+    ) {
         const now = Date.now();
         return messageCount >= maxMessages || now - lastRatchetTime >= maxTime;
     }

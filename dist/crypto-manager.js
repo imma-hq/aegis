@@ -27,7 +27,6 @@ export class CryptoManager {
                 throw new Error(ERRORS.SESSION_NOT_CONFIRMED);
             }
             const plaintextBytes = typeof plaintext === "string" ? utf8ToBytes(plaintext) : plaintext;
-            // Check if we should perform a sending KEM ratchet
             const shouldRatchetResult = shouldRatchet(session);
             let kemCiphertext;
             let updatedSession = session;
@@ -39,65 +38,74 @@ export class CryptoManager {
                 const ratchetResult = performSendingRatchet(session);
                 updatedSession = ratchetResult.session;
                 kemCiphertext = ratchetResult.kemCiphertext;
-                Logger.log("Ratchet", "Sent KEM ratchet", {
+                Logger.log("Ratchet", "Prepared sending KEM ratchet", {
                     ratchetCount: updatedSession.ratchetCount,
-                    newKeyHash: bytesToHex(updatedSession.currentRatchetKeyPair.publicKey).substring(0, 16) + "...",
                 });
             }
-            else if (session.state === "RATCHET_PENDING" &&
-                session.pendingRatchetCiphertext) {
-                // If we previously triggered a ratchet manually, use the pending ciphertext
-                kemCiphertext = session.pendingRatchetCiphertext;
+            else if (session.pendingRatchetState) {
+                kemCiphertext = session.pendingRatchetState.kemCiphertext;
+                updatedSession = session;
                 Logger.log("Ratchet", "Using pending ratchet ciphertext", {
                     ratchetCount: session.ratchetCount,
                 });
             }
-            if (!updatedSession.sendingChain) {
+            const chainToUse = kemCiphertext
+                ? updatedSession.pendingRatchetState?.previousSendingChain ||
+                    session.sendingChain
+                : updatedSession.sendingChain;
+            if (!chainToUse) {
                 throw new Error("No sending chain available");
             }
-            // Symmetric ratchet for this message
-            const { messageKey, newChain } = KemRatchet.symmetricRatchet(updatedSession.sendingChain);
-            // Encrypt
+            const { messageKey, newChain } = KemRatchet.symmetricRatchet(chainToUse);
             const nonce = randomBytes(24);
             const cipher = xchacha20poly1305(messageKey, nonce);
             const ciphertext = cipher.encrypt(plaintextBytes);
             const fullciphertext = concatBytes(nonce, ciphertext);
-            // Create header with timestamp for replay protection
+            const ratchetPublicKey = updatedSession.currentRatchetKeyPair.publicKey;
             const header = {
                 messageId: bytesToHex(blake3(fullciphertext, { dkLen: 32 })),
-                ratchetPublicKey: updatedSession.currentRatchetKeyPair.publicKey,
-                messageNumber: updatedSession.sendingChain.messageNumber,
+                ratchetPublicKey: ratchetPublicKey,
+                messageNumber: chainToUse.messageNumber,
                 previousChainLength: updatedSession.previousSendingChainLength,
                 kemCiphertext: kemCiphertext,
-                isRatchetMessage: shouldRatchetResult || (kemCiphertext ? true : false), // Mark as ratchet message if we have a ciphertext
-                timestamp: Date.now(), // Timestamp for replay protection
+                isRatchetMessage: kemCiphertext ? true : false,
+                timestamp: Date.now(),
             };
-            // Include confirmation MAC if this is the first message from initiator
             let confirmationMac;
             if (updatedSession.state === "CREATED" && updatedSession.isInitiator) {
                 confirmationMac = updatedSession.confirmationMac;
                 Logger.log("Session", "Including key confirmation MAC in first message");
             }
-            // Sign
             const headerBytes = serializeHeader(header);
             const messageToSign = concatBytes(headerBytes, fullciphertext);
             const signature = ml_dsa65.sign(messageToSign, identity.dsaKeyPair.secretKey);
-            // Update session
-            updatedSession.sendingChain = newChain;
-            updatedSession.lastUsed = Date.now();
-            if (updatedSession.state === "CREATED" && updatedSession.isInitiator) {
-                updatedSession.state = "KEY_CONFIRMED";
+            let finalSessionState = updatedSession;
+            if (kemCiphertext) {
+                if (updatedSession.pendingRatchetState) {
+                    finalSessionState = {
+                        ...updatedSession,
+                        sendingChain: newChain,
+                        rootKey: updatedSession.pendingRatchetState.newRootKey,
+                        currentRatchetKeyPair: updatedSession.pendingRatchetState.newRatchetKeyPair,
+                        state: "ACTIVE",
+                    };
+                }
             }
-            // Update session state after ratchet message is sent
-            if (updatedSession.state === "RATCHET_PENDING" && kemCiphertext) {
-                updatedSession.state = "ACTIVE";
+            else {
+                finalSessionState.sendingChain = newChain;
             }
-            await updateSessionState(sessionId, updatedSession);
+            finalSessionState.lastUsed = Date.now();
+            if (finalSessionState.state === "CREATED" &&
+                finalSessionState.isInitiator) {
+                finalSessionState.state = "KEY_CONFIRMED";
+            }
+            await updateSessionState(sessionId, finalSessionState);
             Logger.log("Encrypt", "Message encrypted", {
                 messageNumber: header.messageNumber,
-                ratchetCount: updatedSession.ratchetCount,
+                ratchetCount: finalSessionState.ratchetCount,
                 usedRatchetKey: shouldRatchetResult,
-                state: updatedSession.state,
+                state: finalSessionState.state,
+                isRatchetMessage: !!kemCiphertext,
             });
             return {
                 ciphertext: fullciphertext,
@@ -111,27 +119,24 @@ export class CryptoManager {
             throw error;
         }
     }
-    async decryptMessage(sessionId, encrypted, needsReceivingRatchet, performReceivingRatchet, getSkippedKeyId, storeReceivedMessageId, cleanupSkippedKeys, updateSessionState) {
+    async decryptMessage(sessionId, encrypted, needsReceivingRatchet, performReceivingRatchet, getSkippedKeyId, storeReceivedMessageId, cleanupSkippedKeys, applyPendingRatchet, getDecryptionChainForRatchetMessage, updateSessionState) {
         try {
             Logger.log("Decrypt", "Decrypting message");
             const session = await this.storage.getSession(sessionId);
             if (!session)
                 throw new Error(ERRORS.SESSION_NOT_FOUND);
-            // 1. Verify signature first
             const headerBytes = serializeHeader(encrypted.header);
             const messageToVerify = concatBytes(headerBytes, encrypted.ciphertext);
             const isValid = ml_dsa65.verify(encrypted.signature, messageToVerify, session.peerDsaPublicKey);
             if (!isValid) {
                 throw new Error(ERRORS.INVALID_MESSAGE_SIGNATURE);
             }
-            // 2. Check for duplicate message (Simple replay protection)
             if (session.receivedMessageIds.has(encrypted.header.messageId)) {
                 Logger.warn("Replay", "Duplicate message detected", {
                     messageId: encrypted.header.messageId.substring(0, 16) + "...",
                 });
                 throw new Error(ERRORS.DUPLICATE_MESSAGE);
             }
-            // 3. Check message freshness (Simple timestamp check)
             const now = Date.now();
             const messageAge = now - encrypted.header.timestamp;
             if (messageAge > MAX_MESSAGE_AGE) {
@@ -141,14 +146,12 @@ export class CryptoManager {
                 });
                 throw new Error(ERRORS.MESSAGE_TOO_OLD_TIMESTAMP);
             }
-            // Update last processed timestamp
             session.lastProcessedTimestamp = now;
-            // Handle key confirmation if this is the first message from initiator
             if (encrypted.confirmationMac &&
                 !session.isInitiator &&
                 session.state === "CREATED") {
                 Logger.log("Session", "Processing key confirmation from initiator");
-                const isValidConfirmation = KemRatchet.verifyConfirmationMac(sessionId, session.rootKey, session.sendingChain.chainKey, encrypted.confirmationMac, false);
+                const isValidConfirmation = KemRatchet.verifyConfirmationMac(sessionId, session.rootKey, session.receivingChain.chainKey, encrypted.confirmationMac, false);
                 if (isValidConfirmation) {
                     session.confirmed = true;
                     session.state = "KEY_CONFIRMED";
@@ -160,28 +163,21 @@ export class CryptoManager {
                     throw new Error(ERRORS.KEY_CONFIRMATION_FAILED);
                 }
             }
-            // Check if we need to perform receiving KEM ratchet
             const needsRatchet = needsReceivingRatchet(session, encrypted.header);
+            let updatedSession = session;
+            let isRatchetMessage = false;
             if (needsRatchet && encrypted.header.kemCiphertext) {
                 Logger.log("Ratchet", "Performing receiving KEM ratchet");
                 if (!session.currentRatchetKeyPair?.secretKey) {
                     throw new Error("No current ratchet secret key available");
                 }
-                const updatedSession = performReceivingRatchet(session, encrypted.header.kemCiphertext);
-                // Update session
-                session.rootKey = updatedSession.rootKey;
-                session.currentRatchetKeyPair = updatedSession.currentRatchetKeyPair;
-                session.peerRatchetPublicKey = encrypted.header.ratchetPublicKey;
-                session.previousSendingChainLength =
+                updatedSession = performReceivingRatchet(session, encrypted.header.kemCiphertext);
+                updatedSession.peerRatchetPublicKey = encrypted.header.ratchetPublicKey;
+                updatedSession.previousSendingChainLength =
                     session.sendingChain?.messageNumber ?? 0;
-                session.pendingRatchetCiphertext = undefined;
-                // Reset chains with new keys
-                session.sendingChain = updatedSession.sendingChain;
-                session.receivingChain = updatedSession.receivingChain;
-                session.ratchetCount++;
-                session.state = "ACTIVE";
+                isRatchetMessage = true;
                 Logger.log("Ratchet", "Received KEM ratchet", {
-                    ratchetCount: session.ratchetCount,
+                    ratchetCount: updatedSession.ratchetCount,
                     peerKeyHash: bytesToHex(encrypted.header.ratchetPublicKey).substring(0, 16) +
                         "...",
                 });
@@ -189,88 +185,107 @@ export class CryptoManager {
             else if (needsRatchet && !encrypted.header.kemCiphertext) {
                 throw new Error(ERRORS.RATCHET_CIPHERTEXT_MISSING);
             }
-            // Store the peer's ratchet public key if this is first time we see it
-            if (!session.peerRatchetPublicKey && encrypted.header.ratchetPublicKey) {
-                session.peerRatchetPublicKey = encrypted.header.ratchetPublicKey;
+            if (!updatedSession.peerRatchetPublicKey &&
+                encrypted.header.ratchetPublicKey) {
+                updatedSession.peerRatchetPublicKey = encrypted.header.ratchetPublicKey;
                 Logger.log("Session", "Stored peer ratchet public key", {
                     keyHash: bytesToHex(encrypted.header.ratchetPublicKey).substring(0, 16) +
                         "...",
                 });
             }
-            // Try skipped keys first (for out-of-order messages)
             const skippedKeyId = getSkippedKeyId(encrypted.header.ratchetPublicKey, encrypted.header.messageNumber);
-            const skippedKey = session.skippedMessageKeys.get(skippedKeyId);
+            const skippedKey = updatedSession.skippedMessageKeys.get(skippedKeyId);
             if (skippedKey) {
                 Logger.log("Decrypt", "Using skipped message key", {
                     messageNumber: encrypted.header.messageNumber,
                 });
                 const plaintext = this.decryptWithKey(encrypted.ciphertext, skippedKey.messageKey);
-                // Store message ID after successful decryption
-                storeReceivedMessageId(session, encrypted.header.messageId);
-                session.skippedMessageKeys.delete(skippedKeyId);
-                session.lastUsed = Date.now();
-                await updateSessionState(sessionId, session);
+                storeReceivedMessageId(updatedSession, encrypted.header.messageId);
+                updatedSession.skippedMessageKeys.delete(skippedKeyId);
+                updatedSession.lastUsed = Date.now();
+                await updateSessionState(sessionId, updatedSession);
                 return { plaintext };
             }
-            // Handle out-of-order messages by skipping ahead
-            if (session.receivingChain &&
-                encrypted.header.messageNumber > session.receivingChain.messageNumber) {
-                const skipCount = encrypted.header.messageNumber - session.receivingChain.messageNumber;
-                // Simple replay protection: reject messages too far in the future
-                if (skipCount > session.maxSkippedMessages) {
-                    throw new Error(`Cannot skip ${skipCount} messages, max is ${session.maxSkippedMessages}`);
+            let chainToUseForDecryption;
+            if (isRatchetMessage) {
+                chainToUseForDecryption =
+                    getDecryptionChainForRatchetMessage(updatedSession);
+            }
+            else {
+                // If we have a pending ratchet and this message doesn't seem to fit the current receiving chain,
+                // it might be the first message acknowledging our ratchet.
+                if (updatedSession.state === "RATCHET_PENDING" &&
+                    updatedSession.pendingRatchetState &&
+                    encrypted.header.messageNumber <
+                        updatedSession.receivingChain.messageNumber) {
+                    chainToUseForDecryption =
+                        updatedSession.pendingRatchetState.receivingChain;
+                    Logger.log("Decrypt", "Message number is lower than current chain, trying pending ratchet chain");
+                }
+                else {
+                    chainToUseForDecryption = updatedSession.receivingChain;
+                }
+            }
+            if (chainToUseForDecryption &&
+                encrypted.header.messageNumber > chainToUseForDecryption.messageNumber) {
+                const skipCount = encrypted.header.messageNumber -
+                    chainToUseForDecryption.messageNumber;
+                if (skipCount > updatedSession.maxSkippedMessages) {
+                    throw new Error(`Cannot skip ${skipCount} messages, max is ${updatedSession.maxSkippedMessages}`);
                 }
                 Logger.log("Decrypt", "Skipping message keys", {
-                    from: session.receivingChain.messageNumber,
+                    from: chainToUseForDecryption.messageNumber,
                     to: encrypted.header.messageNumber,
                     count: skipCount,
                 });
-                const { skippedKeys, newChain } = KemRatchet.skipMessageKeys(session.receivingChain, encrypted.header.messageNumber, session.maxSkippedMessages);
-                // Store skipped keys for potential future out-of-order messages
+                const { skippedKeys, newChain } = KemRatchet.skipMessageKeys(chainToUseForDecryption, encrypted.header.messageNumber, updatedSession.maxSkippedMessages);
                 for (const [msgNum, msgKey] of skippedKeys) {
                     const keyId = getSkippedKeyId(encrypted.header.ratchetPublicKey, msgNum);
-                    session.skippedMessageKeys.set(keyId, {
+                    updatedSession.skippedMessageKeys.set(keyId, {
                         messageKey: msgKey,
                         timestamp: Date.now(),
                     });
                 }
-                session.receivingChain = newChain;
+                chainToUseForDecryption = newChain;
             }
-            // Decrypt current message
-            if (!session.receivingChain) {
-                // First message received - initialize receiving chain
-                if (!session.sendingChain) {
-                    throw new Error("No chain available for decryption");
-                }
-                session.receivingChain = {
-                    chainKey: session.sendingChain.chainKey,
-                    messageNumber: 0,
-                };
+            if (!chainToUseForDecryption) {
+                throw new Error("No receiving chain available for decryption");
             }
-            const { messageKey, newChain } = KemRatchet.symmetricRatchet(session.receivingChain);
+            const { messageKey, newChain } = KemRatchet.symmetricRatchet(chainToUseForDecryption);
             const plaintext = this.decryptWithKey(encrypted.ciphertext, messageKey);
-            // Update session state
-            session.receivingChain = newChain;
-            session.highestReceivedMessageNumber = Math.max(session.highestReceivedMessageNumber, encrypted.header.messageNumber);
-            session.lastUsed = Date.now();
-            // Store message ID after successful decryption
-            storeReceivedMessageId(session, encrypted.header.messageId);
-            // Cleanup old skipped keys
-            cleanupSkippedKeys(session);
-            // Check if we need to send confirmation response
-            const needsConfirmation = !session.isInitiator &&
+            if (isRatchetMessage) {
+                // Chains are already updated in updatedSession by performReceivingRatchet
+            }
+            else {
+                updatedSession.receivingChain = newChain;
+            }
+            updatedSession.highestReceivedMessageNumber = Math.max(updatedSession.highestReceivedMessageNumber, encrypted.header.messageNumber);
+            updatedSession.lastUsed = Date.now();
+            storeReceivedMessageId(updatedSession, encrypted.header.messageId);
+            cleanupSkippedKeys(updatedSession);
+            const needsConfirmation = !updatedSession.isInitiator &&
                 encrypted.confirmationMac &&
-                session.state === "KEY_CONFIRMED" &&
-                !session.confirmed;
+                updatedSession.state === "KEY_CONFIRMED" &&
+                !updatedSession.confirmed;
             if (needsConfirmation) {
-                session.confirmed = true;
+                updatedSession.confirmed = true;
                 Logger.log("Session", "Ready to send key confirmation response");
             }
-            await updateSessionState(sessionId, session);
+            if (updatedSession.pendingRatchetState) {
+                if (isRatchetMessage) {
+                    updatedSession = applyPendingRatchet(updatedSession);
+                }
+                else if (chainToUseForDecryption ===
+                    updatedSession.pendingRatchetState.receivingChain) {
+                    updatedSession = applyPendingRatchet(updatedSession);
+                }
+            }
+            await updateSessionState(sessionId, updatedSession);
             Logger.log("Decrypt", "Message decrypted successfully", {
                 messageNumber: encrypted.header.messageNumber,
-                ratchetCount: session.ratchetCount,
-                state: session.state,
+                ratchetCount: updatedSession.ratchetCount,
+                state: updatedSession.state,
+                isRatchetMessage,
             });
             return {
                 plaintext,

@@ -22,7 +22,7 @@ export class SessionManager {
             if (!isValid) {
                 throw new Error(ERRORS.INVALID_PREKEY_SIGNATURE);
             }
-            const { sessionId, rootKey, chainKey, ciphertext, confirmationMac } = SessionKeyExchange.createInitiatorSession(identity, peerBundle);
+            const { sessionId, rootKey, sendingChainKey, receivingChainKey, ciphertext, confirmationMac, } = SessionKeyExchange.createInitiatorSession(identity, peerBundle);
             const ratchetKeyPair = ml_kem768.keygen();
             const session = {
                 sessionId,
@@ -32,10 +32,13 @@ export class SessionManager {
                 currentRatchetKeyPair: ratchetKeyPair,
                 peerRatchetPublicKey: null,
                 sendingChain: {
-                    chainKey,
+                    chainKey: sendingChainKey,
                     messageNumber: 0,
                 },
-                receivingChain: null,
+                receivingChain: {
+                    chainKey: receivingChainKey,
+                    messageNumber: 0,
+                },
                 previousSendingChainLength: 0,
                 skippedMessageKeys: new Map(),
                 highestReceivedMessageNumber: -1,
@@ -71,7 +74,7 @@ export class SessionManager {
             if (!isValidSignature) {
                 throw new Error(ERRORS.INVALID_PREKEY_SIGNATURE);
             }
-            const { sessionId, rootKey, chainKey, confirmationMac, isValid } = SessionKeyExchange.createResponderSession(identity, peerBundle, ciphertext, initiatorConfirmationMac);
+            const { sessionId, rootKey, sendingChainKey, receivingChainKey, confirmationMac, isValid, } = SessionKeyExchange.createResponderSession(identity, peerBundle, ciphertext, initiatorConfirmationMac);
             if (!isValid && initiatorConfirmationMac) {
                 throw new Error(ERRORS.KEY_CONFIRMATION_FAILED);
             }
@@ -84,10 +87,13 @@ export class SessionManager {
                 currentRatchetKeyPair: ratchetKeyPair,
                 peerRatchetPublicKey: null,
                 sendingChain: {
-                    chainKey,
+                    chainKey: sendingChainKey,
                     messageNumber: 0,
                 },
-                receivingChain: null,
+                receivingChain: {
+                    chainKey: receivingChainKey,
+                    messageNumber: 0,
+                },
                 previousSendingChainLength: 0,
                 skippedMessageKeys: new Map(),
                 highestReceivedMessageNumber: -1,
@@ -125,7 +131,7 @@ export class SessionManager {
             if (!session.sendingChain) {
                 throw new Error("No sending chain available");
             }
-            const isValid = SessionKeyExchange.verifyKeyConfirmation(sessionId, session.rootKey, session.sendingChain.chainKey, responderConfirmationMac);
+            const isValid = SessionKeyExchange.verifyKeyConfirmation(sessionId, session.rootKey, session.receivingChain.chainKey, responderConfirmationMac);
             if (isValid) {
                 session.confirmed = true;
                 session.state = "KEY_CONFIRMED";

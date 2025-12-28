@@ -1,5 +1,5 @@
 export { E2EE as Aegis } from "./e2ee.js";
-export { MemoryStorage, IndexedDBStorage } from "./storage.js";
+export { MemoryStorage } from "./storage.js";
 export { Logger } from "./logger.js";
 export { KemRatchet } from "./ratchet.js";
 export { SessionKeyExchange } from "./session.js";
