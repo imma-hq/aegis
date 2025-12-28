@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { Aegis, MemoryStorage } from "../src/index.js";
+import { Aegis, MemoryStorage } from "../src/index";
 import type { Group } from "../src/types";
 
 describe("Group", () => {
@@ -27,29 +27,29 @@ describe("Group", () => {
       const memberKemPublicKeys = new Map<string, Uint8Array>();
       memberKemPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.kemKeyPair.publicKey
+        aliceIdentity.kemKeyPair.publicKey,
       );
       memberKemPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.kemKeyPair.publicKey
+        bobIdentity.kemKeyPair.publicKey,
       );
       memberKemPublicKeys.set(
         charlieIdentity.userId,
-        charlieIdentity.kemKeyPair.publicKey
+        charlieIdentity.kemKeyPair.publicKey,
       );
 
       const memberDsaPublicKeys = new Map<string, Uint8Array>();
       memberDsaPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.dsaKeyPair.publicKey
+        aliceIdentity.dsaKeyPair.publicKey,
       );
       memberDsaPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.dsaKeyPair.publicKey
+        bobIdentity.dsaKeyPair.publicKey,
       );
       memberDsaPublicKeys.set(
         charlieIdentity.userId,
-        charlieIdentity.dsaKeyPair.publicKey
+        charlieIdentity.dsaKeyPair.publicKey,
       );
 
       // Create group
@@ -57,7 +57,7 @@ describe("Group", () => {
         "Test Group",
         [aliceIdentity.userId, bobIdentity.userId, charlieIdentity.userId],
         memberKemPublicKeys,
-        memberDsaPublicKeys
+        memberDsaPublicKeys,
       );
 
       expect(group).toBeDefined();
@@ -81,13 +81,13 @@ describe("Group", () => {
       const memberKemPublicKeys = new Map<string, Uint8Array>();
       memberKemPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.kemKeyPair.publicKey
+        aliceIdentity.kemKeyPair.publicKey,
       );
 
       const memberDsaPublicKeys = new Map<string, Uint8Array>();
       memberDsaPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.dsaKeyPair.publicKey
+        aliceIdentity.dsaKeyPair.publicKey,
       );
 
       await expect(
@@ -95,8 +95,8 @@ describe("Group", () => {
           "Small Group",
           [aliceIdentity.userId],
           memberKemPublicKeys,
-          memberDsaPublicKeys
-        )
+          memberDsaPublicKeys,
+        ),
       ).rejects.toThrow("Group must have at least 2 members");
     });
 
@@ -109,28 +109,28 @@ describe("Group", () => {
       const memberKemPublicKeys = new Map<string, Uint8Array>();
       memberKemPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.kemKeyPair.publicKey
+        aliceIdentity.kemKeyPair.publicKey,
       );
       memberKemPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.kemKeyPair.publicKey
+        bobIdentity.kemKeyPair.publicKey,
       );
 
       const memberDsaPublicKeys = new Map<string, Uint8Array>();
       memberDsaPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.dsaKeyPair.publicKey
+        aliceIdentity.dsaKeyPair.publicKey,
       );
       memberDsaPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.dsaKeyPair.publicKey
+        bobIdentity.dsaKeyPair.publicKey,
       );
 
       const group = await alice.createGroup(
         "Test Group",
         [aliceIdentity.userId, bobIdentity.userId],
         memberKemPublicKeys,
-        memberDsaPublicKeys
+        memberDsaPublicKeys,
       );
 
       // Check that member keys are encrypted (not equal to the shared key)
@@ -163,29 +163,29 @@ describe("Group", () => {
       const memberKemPublicKeys = new Map<string, Uint8Array>();
       memberKemPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.kemKeyPair.publicKey
+        aliceIdentity.kemKeyPair.publicKey,
       );
       memberKemPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.kemKeyPair.publicKey
+        bobIdentity.kemKeyPair.publicKey,
       );
       memberKemPublicKeys.set(
         charlieIdentity.userId,
-        charlieIdentity.kemKeyPair.publicKey
+        charlieIdentity.kemKeyPair.publicKey,
       );
 
       const memberDsaPublicKeys = new Map<string, Uint8Array>();
       memberDsaPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.dsaKeyPair.publicKey
+        aliceIdentity.dsaKeyPair.publicKey,
       );
       memberDsaPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.dsaKeyPair.publicKey
+        bobIdentity.dsaKeyPair.publicKey,
       );
       memberDsaPublicKeys.set(
         charlieIdentity.userId,
-        charlieIdentity.dsaKeyPair.publicKey
+        charlieIdentity.dsaKeyPair.publicKey,
       );
 
       // Create group
@@ -193,7 +193,7 @@ describe("Group", () => {
         "Test Group",
         [aliceIdentity.userId, bobIdentity.userId, charlieIdentity.userId],
         memberKemPublicKeys,
-        memberDsaPublicKeys
+        memberDsaPublicKeys,
       );
 
       // Sync group data to all participants (similar to how it's done in the demo)
@@ -227,13 +227,13 @@ describe("Group", () => {
               owner: aliceGroupSession.owner,
               memberKeys: Array.from(aliceGroupSession.memberKeys.entries()),
               memberPublicKeys: Array.from(
-                aliceGroupSession.memberPublicKeys.entries()
+                aliceGroupSession.memberPublicKeys.entries(),
               ),
               memberDsaPublicKeys: Array.from(
-                aliceGroupSession.memberDsaPublicKeys.entries()
+                aliceGroupSession.memberDsaPublicKeys.entries(),
               ),
               receivedMessageNumbers: Array.from(
-                aliceGroupSession.receivedMessageNumbers.entries()
+                aliceGroupSession.receivedMessageNumbers.entries(),
               ),
             },
             receivedMessageIds: new Set<string>(),
@@ -248,7 +248,7 @@ describe("Group", () => {
       const originalMessage = "Hello, group!";
       const encrypted = await alice.encryptGroupMessage(
         group.groupId,
-        originalMessage
+        originalMessage,
       );
       const decrypted = await bob.decryptGroupMessage(group.groupId, encrypted);
 
@@ -260,7 +260,7 @@ describe("Group", () => {
       const originalMessage = new TextEncoder().encode("Uint8Array message");
       const encrypted = await alice.encryptGroupMessage(
         group.groupId,
-        originalMessage
+        originalMessage,
       );
       const decrypted = await bob.decryptGroupMessage(group.groupId, encrypted);
 
@@ -271,7 +271,7 @@ describe("Group", () => {
       const originalMessage = "Message with signature";
       const encrypted = await alice.encryptGroupMessage(
         group.groupId,
-        originalMessage
+        originalMessage,
       );
 
       // Verify that Bob can decrypt (signature verification passes)
@@ -284,7 +284,7 @@ describe("Group", () => {
       const originalMessage = "Original message";
       const encrypted = await alice.encryptGroupMessage(
         group.groupId,
-        originalMessage
+        originalMessage,
       );
 
       // Modify the signature to make it invalid
@@ -294,18 +294,18 @@ describe("Group", () => {
       };
 
       await expect(
-        bob.decryptGroupMessage(group.groupId, invalidEncrypted)
+        bob.decryptGroupMessage(group.groupId, invalidEncrypted),
       ).rejects.toThrow("Invalid message signature");
     });
 
     it("should maintain message ordering with sequence numbers", async () => {
       const message1 = await alice.encryptGroupMessage(
         group.groupId,
-        "First message"
+        "First message",
       );
       const message2 = await alice.encryptGroupMessage(
         group.groupId,
-        "Second message"
+        "Second message",
       );
 
       expect(message1.header.messageNumber).toBe(1);
@@ -321,7 +321,7 @@ describe("Group", () => {
     it("should prevent replay attacks for group messages", async () => {
       const message = await alice.encryptGroupMessage(
         group.groupId,
-        "Test message"
+        "Test message",
       );
 
       // First decryption should succeed
@@ -331,7 +331,7 @@ describe("Group", () => {
 
       // Second decryption of the same message should fail due to message ordering protection
       await expect(
-        bob.decryptGroupMessage(group.groupId, message)
+        bob.decryptGroupMessage(group.groupId, message),
       ).rejects.toThrow("Message number too low");
     });
   });
@@ -355,29 +355,29 @@ describe("Group", () => {
       const memberKemPublicKeys = new Map<string, Uint8Array>();
       memberKemPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.kemKeyPair.publicKey
+        aliceIdentity.kemKeyPair.publicKey,
       );
       memberKemPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.kemKeyPair.publicKey
+        bobIdentity.kemKeyPair.publicKey,
       );
       memberKemPublicKeys.set(
         charlieIdentity.userId,
-        charlieIdentity.kemKeyPair.publicKey
+        charlieIdentity.kemKeyPair.publicKey,
       );
 
       const memberDsaPublicKeys = new Map<string, Uint8Array>();
       memberDsaPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.dsaKeyPair.publicKey
+        aliceIdentity.dsaKeyPair.publicKey,
       );
       memberDsaPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.dsaKeyPair.publicKey
+        bobIdentity.dsaKeyPair.publicKey,
       );
       memberDsaPublicKeys.set(
         charlieIdentity.userId,
-        charlieIdentity.dsaKeyPair.publicKey
+        charlieIdentity.dsaKeyPair.publicKey,
       );
 
       // Create group
@@ -385,7 +385,7 @@ describe("Group", () => {
         "Test Group",
         [aliceIdentity.userId, bobIdentity.userId],
         memberKemPublicKeys,
-        memberDsaPublicKeys
+        memberDsaPublicKeys,
       );
 
       // Sync group data to all participants (similar to how it's done in the demo)
@@ -419,13 +419,13 @@ describe("Group", () => {
               owner: aliceGroupSession.owner,
               memberKeys: Array.from(aliceGroupSession.memberKeys.entries()),
               memberPublicKeys: Array.from(
-                aliceGroupSession.memberPublicKeys.entries()
+                aliceGroupSession.memberPublicKeys.entries(),
               ),
               memberDsaPublicKeys: Array.from(
-                aliceGroupSession.memberDsaPublicKeys.entries()
+                aliceGroupSession.memberDsaPublicKeys.entries(),
               ),
               receivedMessageNumbers: Array.from(
-                aliceGroupSession.receivedMessageNumbers.entries()
+                aliceGroupSession.receivedMessageNumbers.entries(),
               ),
             },
             receivedMessageIds: new Set<string>(),
@@ -465,7 +465,7 @@ describe("Group", () => {
 
     it("should only allow owner to update group key", async () => {
       await expect(bob.updateGroupKey(group.groupId)).rejects.toThrow(
-        "Only group owner can update group key"
+        "Only group owner can update group key",
       );
     });
   });
@@ -489,21 +489,21 @@ describe("Group", () => {
       const memberKemPublicKeys = new Map<string, Uint8Array>();
       memberKemPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.kemKeyPair.publicKey
+        aliceIdentity.kemKeyPair.publicKey,
       );
       memberKemPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.kemKeyPair.publicKey
+        bobIdentity.kemKeyPair.publicKey,
       );
 
       const memberDsaPublicKeys = new Map<string, Uint8Array>();
       memberDsaPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.dsaKeyPair.publicKey
+        aliceIdentity.dsaKeyPair.publicKey,
       );
       memberDsaPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.dsaKeyPair.publicKey
+        bobIdentity.dsaKeyPair.publicKey,
       );
 
       // Create group with Alice and Bob
@@ -511,7 +511,7 @@ describe("Group", () => {
         "Test Group",
         [aliceIdentity.userId, bobIdentity.userId],
         memberKemPublicKeys,
-        memberDsaPublicKeys
+        memberDsaPublicKeys,
       );
 
       // Sync group data to all participants
@@ -544,13 +544,13 @@ describe("Group", () => {
               owner: aliceGroupSession.owner,
               memberKeys: Array.from(aliceGroupSession.memberKeys.entries()),
               memberPublicKeys: Array.from(
-                aliceGroupSession.memberPublicKeys.entries()
+                aliceGroupSession.memberPublicKeys.entries(),
               ),
               memberDsaPublicKeys: Array.from(
-                aliceGroupSession.memberDsaPublicKeys.entries()
+                aliceGroupSession.memberDsaPublicKeys.entries(),
               ),
               receivedMessageNumbers: Array.from(
-                aliceGroupSession.receivedMessageNumbers.entries()
+                aliceGroupSession.receivedMessageNumbers.entries(),
               ),
             },
             receivedMessageIds: new Set<string>(),
@@ -567,7 +567,7 @@ describe("Group", () => {
         group.groupId,
         charlieIdentity.userId,
         {} as any, // session parameter (unused)
-        charlieIdentity.kemKeyPair.publicKey // Charlie's public key
+        charlieIdentity.kemKeyPair.publicKey, // Charlie's public key
       );
 
       const updatedGroup = await alice.getGroup(group.groupId);
@@ -582,8 +582,8 @@ describe("Group", () => {
           group.groupId,
           charlieIdentity.userId,
           {} as any,
-          charlieIdentity.kemKeyPair.publicKey
-        )
+          charlieIdentity.kemKeyPair.publicKey,
+        ),
       ).rejects.toThrow("Only group owner can add members");
     });
 
@@ -593,8 +593,8 @@ describe("Group", () => {
           group.groupId,
           bobIdentity.userId,
           {} as any,
-          bobIdentity.kemKeyPair.publicKey
-        )
+          bobIdentity.kemKeyPair.publicKey,
+        ),
       ).rejects.toThrow("User is already a member of this group");
     });
 
@@ -604,7 +604,7 @@ describe("Group", () => {
         group.groupId,
         charlieIdentity.userId,
         {} as any,
-        charlieIdentity.kemKeyPair.publicKey
+        charlieIdentity.kemKeyPair.publicKey,
       );
 
       const updatedGroup = await alice.getGroup(group.groupId);
@@ -612,7 +612,7 @@ describe("Group", () => {
 
       // Check that Charlie's key is encrypted and stored
       const charlieEncryptedKey = updatedGroup?.memberKeys.get(
-        charlieIdentity.userId
+        charlieIdentity.userId,
       );
       expect(charlieEncryptedKey).toBeDefined();
       expect(charlieEncryptedKey).not.toEqual(updatedGroup?.sharedKey);
@@ -638,29 +638,29 @@ describe("Group", () => {
       const memberKemPublicKeys = new Map<string, Uint8Array>();
       memberKemPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.kemKeyPair.publicKey
+        aliceIdentity.kemKeyPair.publicKey,
       );
       memberKemPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.kemKeyPair.publicKey
+        bobIdentity.kemKeyPair.publicKey,
       );
       memberKemPublicKeys.set(
         charlieIdentity.userId,
-        charlieIdentity.kemKeyPair.publicKey
+        charlieIdentity.kemKeyPair.publicKey,
       );
 
       const memberDsaPublicKeys = new Map<string, Uint8Array>();
       memberDsaPublicKeys.set(
         aliceIdentity.userId,
-        aliceIdentity.dsaKeyPair.publicKey
+        aliceIdentity.dsaKeyPair.publicKey,
       );
       memberDsaPublicKeys.set(
         bobIdentity.userId,
-        bobIdentity.dsaKeyPair.publicKey
+        bobIdentity.dsaKeyPair.publicKey,
       );
       memberDsaPublicKeys.set(
         charlieIdentity.userId,
-        charlieIdentity.dsaKeyPair.publicKey
+        charlieIdentity.dsaKeyPair.publicKey,
       );
 
       // Create group
@@ -668,7 +668,7 @@ describe("Group", () => {
         "Test Group",
         [aliceIdentity.userId, bobIdentity.userId, charlieIdentity.userId],
         memberKemPublicKeys,
-        memberDsaPublicKeys
+        memberDsaPublicKeys,
       );
 
       // Sync group data to all participants (similar to how it's done in the demo)
@@ -702,13 +702,13 @@ describe("Group", () => {
               owner: aliceGroupSession.owner,
               memberKeys: Array.from(aliceGroupSession.memberKeys.entries()),
               memberPublicKeys: Array.from(
-                aliceGroupSession.memberPublicKeys.entries()
+                aliceGroupSession.memberPublicKeys.entries(),
               ),
               memberDsaPublicKeys: Array.from(
-                aliceGroupSession.memberDsaPublicKeys.entries()
+                aliceGroupSession.memberDsaPublicKeys.entries(),
               ),
               receivedMessageNumbers: Array.from(
-                aliceGroupSession.receivedMessageNumbers.entries()
+                aliceGroupSession.receivedMessageNumbers.entries(),
               ),
             },
             receivedMessageIds: new Set<string>(),
@@ -724,45 +724,45 @@ describe("Group", () => {
       const messageFromAlice = "Hello from Alice";
       const encryptedByAlice = await alice.encryptGroupMessage(
         group.groupId,
-        messageFromAlice
+        messageFromAlice,
       );
 
       // Bob should be able to decrypt Alice's message
       const decryptedByBob = await bob.decryptGroupMessage(
         group.groupId,
-        encryptedByAlice
+        encryptedByAlice,
       );
       expect(new TextDecoder().decode(decryptedByBob)).toBe(messageFromAlice);
 
       // Charlie should also be able to decrypt Alice's message
       const decryptedByCharlie = await charlie.decryptGroupMessage(
         group.groupId,
-        encryptedByAlice
+        encryptedByAlice,
       );
       expect(new TextDecoder().decode(decryptedByCharlie)).toBe(
-        messageFromAlice
+        messageFromAlice,
       );
 
       // Bob sends a message
       const messageFromBob = "Hello from Bob";
       const encryptedByBob = await bob.encryptGroupMessage(
         group.groupId,
-        messageFromBob
+        messageFromBob,
       );
 
       // Alice and Charlie should be able to decrypt Bob's message
       const decryptedByAlice2 = await alice.decryptGroupMessage(
         group.groupId,
-        encryptedByBob
+        encryptedByBob,
       );
       expect(new TextDecoder().decode(decryptedByAlice2)).toBe(messageFromBob);
 
       const decryptedByCharlie2 = await charlie.decryptGroupMessage(
         group.groupId,
-        encryptedByBob
+        encryptedByBob,
       );
       expect(new TextDecoder().decode(decryptedByCharlie2)).toBe(
-        messageFromBob
+        messageFromBob,
       );
     });
 

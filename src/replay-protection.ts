@@ -1,5 +1,5 @@
-import type { Session } from "./types.js";
-import { MAX_STORED_MESSAGE_IDS } from "./constants.js";
+import type { Session } from "./types";
+import { MAX_STORED_MESSAGE_IDS } from "./constants";
 
 export class ReplayProtection {
   getSkippedKeyId(ratchetPublicKey: Uint8Array, messageNumber: number): string {

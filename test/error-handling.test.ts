@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { Aegis, MemoryStorage } from "../src/index.js";
-import { ERRORS } from "../src/constants.js";
+import { Aegis, MemoryStorage } from "../src/index";
+import { ERRORS } from "../src/constants";
 
 describe("Error Handling", () => {
   let alice: Aegis;

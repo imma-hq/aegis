@@ -2,9 +2,9 @@ import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex, concatBytes } from "@noble/hashes/utils.js";
-import { Logger } from "./logger.js";
-import { PreKeyManager } from "./prekey-manager.js";
-import { ERRORS } from "./constants.js";
+import { Logger } from "./logger";
+import { PreKeyManager } from "./prekey-manager";
+import { ERRORS } from "./constants";
 export class IdentityManager {
     constructor(storage) {
         Object.defineProperty(this, "storage", {

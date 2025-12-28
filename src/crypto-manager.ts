@@ -10,11 +10,11 @@ import type {
   StorageAdapter,
   MessageHeader,
   RatchetChain,
-} from "./types.js";
-import { Logger } from "./logger.js";
-import { ERRORS, MAX_MESSAGE_AGE } from "./constants.js";
-import { serializeHeader } from "./utils.js";
-import { KemRatchet } from "./ratchet.js";
+} from "./types";
+import { Logger } from "./logger";
+import { ERRORS, MAX_MESSAGE_AGE } from "./constants";
+import { serializeHeader } from "./utils";
+import { KemRatchet } from "./ratchet";
 
 export class CryptoManager {
   private storage: StorageAdapter;
@@ -32,7 +32,7 @@ export class CryptoManager {
       session: Session;
       kemCiphertext?: Uint8Array;
     },
-    updateSessionState: (sessionId: string, session: Session) => Promise<void>
+    updateSessionState: (sessionId: string, session: Session) => Promise<void>,
   ): Promise<EncryptedMessage> {
     try {
       Logger.log("Encrypt", "Encrypting message");
@@ -55,7 +55,7 @@ export class CryptoManager {
       if (shouldRatchetResult) {
         Logger.log(
           "Ratchet",
-          "Performing sending KEM ratchet before encryption"
+          "Performing sending KEM ratchet before encryption",
         );
 
         if (!session.peerRatchetPublicKey) {
@@ -110,7 +110,7 @@ export class CryptoManager {
         confirmationMac = updatedSession.confirmationMac;
         Logger.log(
           "Session",
-          "Including key confirmation MAC in first message"
+          "Including key confirmation MAC in first message",
         );
       }
 
@@ -118,7 +118,7 @@ export class CryptoManager {
       const messageToSign = concatBytes(headerBytes, fullciphertext);
       const signature = ml_dsa65.sign(
         messageToSign,
-        identity.dsaKeyPair.secretKey
+        identity.dsaKeyPair.secretKey,
       );
 
       let finalSessionState = updatedSession;
@@ -175,19 +175,19 @@ export class CryptoManager {
     needsReceivingRatchet: (session: Session, header: MessageHeader) => boolean,
     performReceivingRatchet: (
       session: Session,
-      kemCiphertext: Uint8Array
+      kemCiphertext: Uint8Array,
     ) => Session,
     getSkippedKeyId: (
       ratchetPublicKey: Uint8Array,
-      messageNumber: number
+      messageNumber: number,
     ) => string,
     storeReceivedMessageId: (session: Session, messageId: string) => void,
     cleanupSkippedKeys: (session: Session) => void,
     applyPendingRatchet: (session: Session) => Session,
     getDecryptionChainForRatchetMessage: (
-      session: Session
+      session: Session,
     ) => RatchetChain | null,
-    updateSessionState: (sessionId: string, session: Session) => Promise<void>
+    updateSessionState: (sessionId: string, session: Session) => Promise<void>,
   ): Promise<{ plaintext: Uint8Array; needsConfirmation?: boolean }> {
     try {
       Logger.log("Decrypt", "Decrypting message");
@@ -200,7 +200,7 @@ export class CryptoManager {
       const isValid = ml_dsa65.verify(
         encrypted.signature,
         messageToVerify,
-        session.peerDsaPublicKey
+        session.peerDsaPublicKey,
       );
 
       if (!isValid) {
@@ -238,7 +238,7 @@ export class CryptoManager {
           session.rootKey,
           session.receivingChain!.chainKey,
           encrypted.confirmationMac,
-          false
+          false,
         );
 
         if (isValidConfirmation) {
@@ -266,7 +266,7 @@ export class CryptoManager {
 
         updatedSession = performReceivingRatchet(
           session,
-          encrypted.header.kemCiphertext
+          encrypted.header.kemCiphertext,
         );
 
         updatedSession.peerRatchetPublicKey = encrypted.header.ratchetPublicKey;
@@ -299,7 +299,7 @@ export class CryptoManager {
 
       const skippedKeyId = getSkippedKeyId(
         encrypted.header.ratchetPublicKey,
-        encrypted.header.messageNumber
+        encrypted.header.messageNumber,
       );
 
       const skippedKey = updatedSession.skippedMessageKeys.get(skippedKeyId);
@@ -310,7 +310,7 @@ export class CryptoManager {
 
         const plaintext = this.decryptWithKey(
           encrypted.ciphertext,
-          skippedKey.messageKey
+          skippedKey.messageKey,
         );
 
         storeReceivedMessageId(updatedSession, encrypted.header.messageId);
@@ -339,7 +339,7 @@ export class CryptoManager {
             updatedSession.pendingRatchetState.receivingChain;
           Logger.log(
             "Decrypt",
-            "Message number is lower than current chain, trying pending ratchet chain"
+            "Message number is lower than current chain, trying pending ratchet chain",
           );
         } else {
           chainToUseForDecryption = updatedSession.receivingChain;
@@ -356,7 +356,7 @@ export class CryptoManager {
 
         if (skipCount > updatedSession.maxSkippedMessages) {
           throw new Error(
-            `Cannot skip ${skipCount} messages, max is ${updatedSession.maxSkippedMessages}`
+            `Cannot skip ${skipCount} messages, max is ${updatedSession.maxSkippedMessages}`,
           );
         }
 
@@ -369,13 +369,13 @@ export class CryptoManager {
         const { skippedKeys, newChain } = KemRatchet.skipMessageKeys(
           chainToUseForDecryption,
           encrypted.header.messageNumber,
-          updatedSession.maxSkippedMessages
+          updatedSession.maxSkippedMessages,
         );
 
         for (const [msgNum, msgKey] of skippedKeys) {
           const keyId = getSkippedKeyId(
             encrypted.header.ratchetPublicKey,
-            msgNum
+            msgNum,
           );
           updatedSession.skippedMessageKeys.set(keyId, {
             messageKey: msgKey,
@@ -391,7 +391,7 @@ export class CryptoManager {
       }
 
       const { messageKey, newChain } = KemRatchet.symmetricRatchet(
-        chainToUseForDecryption
+        chainToUseForDecryption,
       );
 
       const plaintext = this.decryptWithKey(encrypted.ciphertext, messageKey);
@@ -404,7 +404,7 @@ export class CryptoManager {
 
       updatedSession.highestReceivedMessageNumber = Math.max(
         updatedSession.highestReceivedMessageNumber,
-        encrypted.header.messageNumber
+        encrypted.header.messageNumber,
       );
       updatedSession.lastUsed = Date.now();
 
@@ -455,7 +455,7 @@ export class CryptoManager {
 
   private decryptWithKey(
     ciphertext: Uint8Array,
-    messageKey: Uint8Array
+    messageKey: Uint8Array,
   ): Uint8Array {
     const nonce = ciphertext.slice(0, 24);
     const encryptedData = ciphertext.slice(24);

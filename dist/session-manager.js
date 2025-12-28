@@ -1,9 +1,9 @@
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
-import { Logger } from "./logger.js";
-import { ERRORS } from "./constants.js";
-import { SessionKeyExchange } from "./session.js";
-import { validatePublicBundle } from "./utils.js";
+import { Logger } from "./logger";
+import { ERRORS } from "./constants";
+import { SessionKeyExchange } from "./session";
+import { validatePublicBundle } from "./utils";
 export class SessionManager {
     constructor(storage) {
         Object.defineProperty(this, "storage", {

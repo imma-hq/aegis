@@ -10,9 +10,9 @@ import type {
   Identity,
   Session,
   StorageAdapter,
-} from "./types.js";
-import { Logger } from "./logger.js";
-import { MAX_MESSAGE_AGE } from "./constants.js";
+} from "./types";
+import { Logger } from "./logger";
+import { MAX_MESSAGE_AGE } from "./constants";
 
 export class GroupManager {
   private storage: StorageAdapter;
@@ -32,7 +32,7 @@ export class GroupManager {
     name: string,
     members: string[],
     memberKemPublicKeys: Map<string, Uint8Array>,
-    memberDsaPublicKeys: Map<string, Uint8Array>
+    memberDsaPublicKeys: Map<string, Uint8Array>,
   ): Promise<Group> {
     if (!this.identity) {
       throw new Error("GroupManager not initialized with identity");
@@ -52,10 +52,10 @@ export class GroupManager {
         blake3(
           concatBytes(
             utf8ToBytes(name),
-            ...members.map((m) => utf8ToBytes(String(m)))
+            ...members.map((m) => utf8ToBytes(String(m))),
           ),
-          { dkLen: 32 }
-        )
+          { dkLen: 32 },
+        ),
       );
 
     // Check if group already exists in storage
@@ -86,7 +86,7 @@ export class GroupManager {
       // Encrypt the shared key with the member's KEM public key using ML-KEM
       const encryptedSharedKey = await this.encryptKeyWithPublicKey(
         sharedKey,
-        kemPublicKey
+        kemPublicKey,
       );
       memberKeys.set(memberId, encryptedSharedKey);
     }
@@ -135,7 +135,7 @@ export class GroupManager {
         memberPublicKeys: Array.from(group.memberPublicKeys.entries()),
         memberDsaPublicKeys: Array.from(group.memberDsaPublicKeys.entries()),
         receivedMessageNumbers: Array.from(
-          group.receivedMessageNumbers.entries()
+          group.receivedMessageNumbers.entries(),
         ),
       },
       receivedMessageIds: new Set<string>(),
@@ -156,7 +156,7 @@ export class GroupManager {
     groupId: string,
     userId: string,
     _session: Session, // Unused parameter, using underscore prefix
-    userPublicKey: Uint8Array // New parameter for the user's public key
+    userPublicKey: Uint8Array, // New parameter for the user's public key
   ): Promise<void> {
     if (!this.identity) {
       throw new Error("GroupManager not initialized with identity");
@@ -184,7 +184,7 @@ export class GroupManager {
     // Encrypt the shared key with the new member's public key
     const encryptedSharedKey = await this.encryptKeyWithPublicKey(
       group.sharedKey,
-      userPublicKey
+      userPublicKey,
     );
     group.memberKeys.set(userId, encryptedSharedKey);
 
@@ -220,7 +220,7 @@ export class GroupManager {
         memberPublicKeys: Array.from(group.memberPublicKeys.entries()),
         memberDsaPublicKeys: Array.from(group.memberDsaPublicKeys.entries()),
         receivedMessageNumbers: Array.from(
-          group.receivedMessageNumbers.entries()
+          group.receivedMessageNumbers.entries(),
         ),
       },
       receivedMessageIds: new Set<string>(),
@@ -294,7 +294,7 @@ export class GroupManager {
         memberPublicKeys: Array.from(group.memberPublicKeys.entries()),
         memberDsaPublicKeys: Array.from(group.memberDsaPublicKeys.entries()),
         receivedMessageNumbers: Array.from(
-          group.receivedMessageNumbers.entries()
+          group.receivedMessageNumbers.entries(),
         ),
       },
       receivedMessageIds: new Set<string>(),
@@ -337,7 +337,7 @@ export class GroupManager {
       // Encrypt the new shared key with the member's public key
       const encryptedNewSharedKey = await this.encryptKeyWithPublicKey(
         newSharedKey,
-        memberPublicKey
+        memberPublicKey,
       );
       group.memberKeys.set(memberId, encryptedNewSharedKey);
     }
@@ -376,7 +376,7 @@ export class GroupManager {
         memberPublicKeys: Array.from(group.memberPublicKeys.entries()),
         memberDsaPublicKeys: Array.from(group.memberDsaPublicKeys.entries()),
         receivedMessageNumbers: Array.from(
-          group.receivedMessageNumbers.entries()
+          group.receivedMessageNumbers.entries(),
         ),
       },
       receivedMessageIds: new Set<string>(),
@@ -391,7 +391,7 @@ export class GroupManager {
 
   async encryptMessage(
     groupId: string,
-    message: string | Uint8Array
+    message: string | Uint8Array,
   ): Promise<GroupMessage> {
     if (!this.identity) {
       throw new Error("GroupManager not initialized with identity");
@@ -430,7 +430,7 @@ export class GroupManager {
 
       encryptionKey = await this.decryptKeyWithSecretKey(
         encryptedSharedKey,
-        this.identity.kemKeyPair.secretKey
+        this.identity.kemKeyPair.secretKey,
       );
     }
 
@@ -471,7 +471,7 @@ export class GroupManager {
     const messageToSign = concatBytes(headerBytes, fullCiphertext);
     const signature = ml_dsa65.sign(
       messageToSign,
-      this.identity.dsaKeyPair.secretKey
+      this.identity.dsaKeyPair.secretKey,
     );
 
     Logger.log("GroupManager", "Group message encrypted", {
@@ -490,7 +490,7 @@ export class GroupManager {
 
   async decryptMessage(
     groupId: string,
-    encrypted: GroupMessage
+    encrypted: GroupMessage,
   ): Promise<Uint8Array> {
     if (!this.identity) {
       throw new Error("GroupManager not initialized with identity");
@@ -521,13 +521,13 @@ export class GroupManager {
 
     const sharedKey = await this.decryptKeyWithSecretKey(
       encryptedSharedKey,
-      this.identity.kemKeyPair.secretKey
+      this.identity.kemKeyPair.secretKey,
     );
 
     // Get the sender's public key from the group
     const senderPublicKey = await this.getSenderPublicKey(
       groupId,
-      encrypted.header.senderId
+      encrypted.header.senderId,
     );
     if (!senderPublicKey) {
       throw new Error("Could not retrieve sender's public key");
@@ -539,7 +539,7 @@ export class GroupManager {
     const isValid = ml_dsa65.verify(
       encrypted.signature,
       messageToVerify,
-      senderPublicKey
+      senderPublicKey,
     );
 
     if (!isValid) {
@@ -558,14 +558,14 @@ export class GroupManager {
       group.receivedMessageNumbers.get(encrypted.header.senderId) || 0;
     if (encrypted.header.messageNumber <= lastMessageNumber) {
       throw new Error(
-        `Message number too low: ${encrypted.header.messageNumber} <= ${lastMessageNumber}`
+        `Message number too low: ${encrypted.header.messageNumber} <= ${lastMessageNumber}`,
       );
     }
 
     // Update the received message number for this sender
     group.receivedMessageNumbers.set(
       encrypted.header.senderId,
-      encrypted.header.messageNumber
+      encrypted.header.messageNumber,
     );
 
     // Update the group in storage with the new received message number
@@ -597,7 +597,7 @@ export class GroupManager {
         memberPublicKeys: Array.from(group.memberPublicKeys.entries()),
         memberDsaPublicKeys: Array.from(group.memberDsaPublicKeys.entries()),
         receivedMessageNumbers: Array.from(
-          group.receivedMessageNumbers.entries()
+          group.receivedMessageNumbers.entries(),
         ),
       },
       receivedMessageIds: new Set<string>(),
@@ -636,7 +636,7 @@ export class GroupManager {
     // Convert the stored arrays back to Maps
     const memberKeys = new Map<string, Uint8Array>(groupData.memberKeys);
     const memberPublicKeys = new Map<string, Uint8Array>(
-      groupData.memberPublicKeys
+      groupData.memberPublicKeys,
     );
 
     // Initialize received message numbers
@@ -649,7 +649,7 @@ export class GroupManager {
 
     // Initialize DSA public keys
     const memberDsaPublicKeys = new Map<string, Uint8Array>(
-      groupData.memberDsaPublicKeys || []
+      groupData.memberDsaPublicKeys || [],
     );
 
     return {
@@ -686,7 +686,7 @@ export class GroupManager {
 
   private async getSenderPublicKey(
     groupId: string,
-    senderId: string
+    senderId: string,
   ): Promise<Uint8Array | null> {
     const group = await this.getGroup(groupId);
     if (!group) {
@@ -699,7 +699,7 @@ export class GroupManager {
   // Encrypt a key with a public key using ML-KEM
   private async encryptKeyWithPublicKey(
     key: Uint8Array,
-    publicKey: Uint8Array
+    publicKey: Uint8Array,
   ): Promise<Uint8Array> {
     const { ml_kem768 } = await import("@noble/post-quantum/ml-kem.js");
     const { blake3 } = await import("@noble/hashes/blake3.js");
@@ -728,7 +728,7 @@ export class GroupManager {
   // Decrypt an encrypted key with a secret key using ML-KEM
   private async decryptKeyWithSecretKey(
     encryptedKey: Uint8Array,
-    secretKey: Uint8Array
+    secretKey: Uint8Array,
   ): Promise<Uint8Array> {
     const { ml_kem768 } = await import("@noble/post-quantum/ml-kem.js");
     const { blake3 } = await import("@noble/hashes/blake3.js");
@@ -746,7 +746,7 @@ export class GroupManager {
     const kemCiphertext = encryptedKey.slice(0, kemCiphertextLength);
     const nonce = encryptedKey.slice(
       kemCiphertextLength,
-      kemCiphertextLength + nonceLength
+      kemCiphertextLength + nonceLength,
     );
     const encryptedData = encryptedKey.slice(kemCiphertextLength + nonceLength);
 
@@ -767,14 +767,14 @@ export class GroupManager {
     new DataView(timestampBytes.buffer).setBigUint64(
       0,
       BigInt(header.timestamp),
-      true
+      true,
     );
 
     const messageNumberBytes = new Uint8Array(8);
     new DataView(messageNumberBytes.buffer).setBigUint64(
       0,
       BigInt(header.messageNumber),
-      true
+      true,
     );
 
     const senderIdBytes = utf8ToBytes(header.senderId);
@@ -785,14 +785,14 @@ export class GroupManager {
     new DataView(messageIdLength.buffer).setUint32(
       0,
       messageIdBytes.length,
-      true
+      true,
     );
 
     const senderIdLength = new Uint8Array(4);
     new DataView(senderIdLength.buffer).setUint32(
       0,
       senderIdBytes.length,
-      true
+      true,
     );
 
     return concatBytes(
@@ -801,7 +801,7 @@ export class GroupManager {
       timestampBytes,
       senderIdLength,
       senderIdBytes,
-      messageNumberBytes
+      messageNumberBytes,
     );
   }
 }

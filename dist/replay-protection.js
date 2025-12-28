@@ -1,4 +1,4 @@
-import { MAX_STORED_MESSAGE_IDS } from "./constants.js";
+import { MAX_STORED_MESSAGE_IDS } from "./constants";
 export class ReplayProtection {
     getSkippedKeyId(ratchetPublicKey, messageNumber) {
         return `${this.bytesToHex(ratchetPublicKey)}:${messageNumber}`;

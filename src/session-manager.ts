@@ -1,15 +1,10 @@
 import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
-import type {
-  Identity,
-  PublicBundle,
-  Session,
-  StorageAdapter,
-} from "./types.js";
-import { Logger } from "./logger.js";
-import { ERRORS } from "./constants.js";
-import { SessionKeyExchange } from "./session.js";
-import { validatePublicBundle } from "./utils.js";
+import type { Identity, PublicBundle, Session, StorageAdapter } from "./types";
+import { Logger } from "./logger";
+import { ERRORS } from "./constants";
+import { SessionKeyExchange } from "./session";
+import { validatePublicBundle } from "./utils";
 
 export class SessionManager {
   private storage: StorageAdapter;
@@ -20,7 +15,7 @@ export class SessionManager {
 
   async createSession(
     identity: Identity,
-    peerBundle: PublicBundle
+    peerBundle: PublicBundle,
   ): Promise<{
     sessionId: string;
     ciphertext: Uint8Array;
@@ -34,7 +29,7 @@ export class SessionManager {
       const isValid = ml_dsa65.verify(
         peerBundle.preKey.signature,
         peerBundle.preKey.key,
-        peerBundle.dsaPublicKey
+        peerBundle.dsaPublicKey,
       );
 
       if (!isValid) {
@@ -102,7 +97,7 @@ export class SessionManager {
     identity: Identity,
     peerBundle: PublicBundle,
     ciphertext: Uint8Array,
-    initiatorConfirmationMac?: Uint8Array
+    initiatorConfirmationMac?: Uint8Array,
   ): Promise<{
     sessionId: string;
     confirmationMac: Uint8Array;
@@ -116,7 +111,7 @@ export class SessionManager {
       const isValidSignature = ml_dsa65.verify(
         peerBundle.preKey.signature,
         peerBundle.preKey.key,
-        peerBundle.dsaPublicKey
+        peerBundle.dsaPublicKey,
       );
 
       if (!isValidSignature) {
@@ -134,7 +129,7 @@ export class SessionManager {
         identity,
         peerBundle,
         ciphertext,
-        initiatorConfirmationMac
+        initiatorConfirmationMac,
       );
 
       if (!isValid && initiatorConfirmationMac) {
@@ -192,7 +187,7 @@ export class SessionManager {
 
   async confirmSession(
     sessionId: string,
-    responderConfirmationMac: Uint8Array
+    responderConfirmationMac: Uint8Array,
   ): Promise<boolean> {
     try {
       Logger.log("Session", "Confirming session keys");
@@ -208,7 +203,7 @@ export class SessionManager {
         sessionId,
         session.rootKey,
         session.receivingChain!.chainKey,
-        responderConfirmationMac
+        responderConfirmationMac,
       );
 
       if (isValid) {
@@ -255,7 +250,7 @@ export class SessionManager {
           sessionId: session.sessionId.substring(0, 16) + "...",
           age:
             Math.round(
-              (Date.now() - session.lastUsed) / (1000 * 60 * 60 * 24)
+              (Date.now() - session.lastUsed) / (1000 * 60 * 60 * 24),
             ) + " days",
         });
       }

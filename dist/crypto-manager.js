@@ -3,10 +3,10 @@ import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { randomBytes } from "@noble/post-quantum/utils.js";
 import { bytesToHex, concatBytes, utf8ToBytes } from "@noble/hashes/utils.js";
-import { Logger } from "./logger.js";
-import { ERRORS, MAX_MESSAGE_AGE } from "./constants.js";
-import { serializeHeader } from "./utils.js";
-import { KemRatchet } from "./ratchet.js";
+import { Logger } from "./logger";
+import { ERRORS, MAX_MESSAGE_AGE } from "./constants";
+import { serializeHeader } from "./utils";
+import { KemRatchet } from "./ratchet";
 export class CryptoManager {
     constructor(storage) {
         Object.defineProperty(this, "storage", {

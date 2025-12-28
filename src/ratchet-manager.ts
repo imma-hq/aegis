@@ -1,8 +1,8 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
-import type { Session, PendingRatchetState, RatchetChain } from "./types.js";
-import { Logger } from "./logger.js";
-import { RATCHET_AFTER_MESSAGES } from "./constants.js";
-import { KemRatchet } from "./ratchet.js";
+import type { Session, PendingRatchetState, RatchetChain } from "./types";
+import { Logger } from "./logger";
+import { RATCHET_AFTER_MESSAGES } from "./constants";
+import { KemRatchet } from "./ratchet";
 
 export class RatchetManager {
   shouldPerformSendingRatchet(session: Session): boolean {
@@ -22,7 +22,7 @@ export class RatchetManager {
       isRatchetMessage?: boolean;
       kemCiphertext?: Uint8Array;
       ratchetPublicKey: Uint8Array;
-    }
+    },
   ): boolean {
     return (
       header.isRatchetMessage === true ||
@@ -39,7 +39,7 @@ export class RatchetManager {
 
     const result = KemRatchet.performKemRatchetEncapsulate(
       session.rootKey,
-      session.peerRatchetPublicKey
+      session.peerRatchetPublicKey,
     );
 
     const newSession = { ...session };
@@ -73,7 +73,7 @@ export class RatchetManager {
 
   performReceivingRatchet(
     session: Session,
-    kemCiphertext: Uint8Array
+    kemCiphertext: Uint8Array,
   ): Session {
     if (!session.currentRatchetKeyPair?.secretKey) {
       throw new Error("No current ratchet secret key available");
@@ -82,7 +82,7 @@ export class RatchetManager {
     const result = KemRatchet.performKemRatchetDecapsulate(
       session.rootKey,
       kemCiphertext,
-      session.currentRatchetKeyPair.secretKey
+      session.currentRatchetKeyPair.secretKey,
     );
 
     const previousReceivingChain = session.receivingChain;
@@ -144,7 +144,7 @@ export class RatchetManager {
 
     const result = KemRatchet.performKemRatchetEncapsulate(
       session.rootKey,
-      session.peerRatchetPublicKey
+      session.peerRatchetPublicKey,
     );
 
     const newSession: Session = {

@@ -1,7 +1,7 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { Logger } from "./logger.js";
-import { RATCHET_AFTER_MESSAGES } from "./constants.js";
-import { KemRatchet } from "./ratchet.js";
+import { Logger } from "./logger";
+import { RATCHET_AFTER_MESSAGES } from "./constants";
+import { KemRatchet } from "./ratchet";
 export class RatchetManager {
     shouldPerformSendingRatchet(session) {
         const messageCount = session.sendingChain?.messageNumber || 0;

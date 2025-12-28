@@ -5,14 +5,14 @@ import type {
   Session,
   EncryptedMessage,
   StorageAdapter,
-} from "./types.js";
-import { Logger } from "./logger.js";
-import { IdentityManager } from "./identity-manager.js";
-import { SessionManager } from "./session-manager.js";
-import { CryptoManager } from "./crypto-manager.js";
-import { RatchetManager } from "./ratchet-manager.js";
-import { ReplayProtection } from "./replay-protection.js";
-import { GroupManager } from "./group-manager.js";
+} from "./types";
+import { Logger } from "./logger";
+import { IdentityManager } from "./identity-manager";
+import { SessionManager } from "./session-manager";
+import { CryptoManager } from "./crypto-manager";
+import { RatchetManager } from "./ratchet-manager";
+import { ReplayProtection } from "./replay-protection";
+import { GroupManager } from "./group-manager";
 
 export class E2EE {
   private identityManager: IdentityManager;

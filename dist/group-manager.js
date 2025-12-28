@@ -3,8 +3,8 @@ import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { randomBytes } from "@noble/post-quantum/utils.js";
 import { bytesToHex, concatBytes, utf8ToBytes } from "@noble/hashes/utils.js";
-import { Logger } from "./logger.js";
-import { MAX_MESSAGE_AGE } from "./constants.js";
+import { Logger } from "./logger";
+import { MAX_MESSAGE_AGE } from "./constants";
 export class GroupManager {
     constructor(storage) {
         Object.defineProperty(this, "storage", {
@@ -124,8 +124,7 @@ export class GroupManager {
         return group;
     }
     async addMember(groupId, userId, _session, // Unused parameter, using underscore prefix
-    userPublicKey // New parameter for the user's public key
-    ) {
+    userPublicKey) {
         if (!this.identity) {
             throw new Error("GroupManager not initialized with identity");
         }

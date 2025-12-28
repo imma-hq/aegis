@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { MemoryStorage } from "../src/storage.js";
-import { Identity, Session } from "../src/types.js";
+import { MemoryStorage } from "../src/storage";
+import { Identity, Session } from "../src/types";
 
 describe("MemoryStorage", () => {
   let storage: MemoryStorage;
@@ -28,10 +28,18 @@ describe("MemoryStorage", () => {
 
     expect(retrieved).toBeDefined();
     expect(retrieved?.userId).toBe(identity.userId);
-    expect(retrieved?.kemKeyPair.publicKey).toEqual(identity.kemKeyPair.publicKey);
-    expect(retrieved?.kemKeyPair.secretKey).toEqual(identity.kemKeyPair.secretKey);
-    expect(retrieved?.dsaKeyPair.publicKey).toEqual(identity.dsaKeyPair.publicKey);
-    expect(retrieved?.dsaKeyPair.secretKey).toEqual(identity.dsaKeyPair.secretKey);
+    expect(retrieved?.kemKeyPair.publicKey).toEqual(
+      identity.kemKeyPair.publicKey,
+    );
+    expect(retrieved?.kemKeyPair.secretKey).toEqual(
+      identity.kemKeyPair.secretKey,
+    );
+    expect(retrieved?.dsaKeyPair.publicKey).toEqual(
+      identity.dsaKeyPair.publicKey,
+    );
+    expect(retrieved?.dsaKeyPair.secretKey).toEqual(
+      identity.dsaKeyPair.secretKey,
+    );
   });
 
   it("should delete identity", async () => {
@@ -99,10 +107,18 @@ describe("MemoryStorage", () => {
     expect(retrieved?.sessionId).toBe(sessionId);
     expect(retrieved?.peerUserId).toBe(session.peerUserId);
     expect(retrieved?.rootKey).toEqual(session.rootKey);
-    expect(retrieved?.currentRatchetKeyPair?.publicKey).toEqual(session.currentRatchetKeyPair?.publicKey);
-    expect(retrieved?.currentRatchetKeyPair?.secretKey).toEqual(session.currentRatchetKeyPair?.secretKey);
-    expect(retrieved?.receivingChain?.chainKey).toEqual(session.receivingChain?.chainKey);
-    expect(retrieved?.receivingChain?.messageNumber).toEqual(session.receivingChain?.messageNumber);
+    expect(retrieved?.currentRatchetKeyPair?.publicKey).toEqual(
+      session.currentRatchetKeyPair?.publicKey,
+    );
+    expect(retrieved?.currentRatchetKeyPair?.secretKey).toEqual(
+      session.currentRatchetKeyPair?.secretKey,
+    );
+    expect(retrieved?.receivingChain?.chainKey).toEqual(
+      session.receivingChain?.chainKey,
+    );
+    expect(retrieved?.receivingChain?.messageNumber).toEqual(
+      session.receivingChain?.messageNumber,
+    );
     expect(retrieved?.skippedMessageKeys).toEqual(session.skippedMessageKeys);
     expect(retrieved?.receivedMessageIds).toEqual(session.receivedMessageIds);
   });
@@ -272,7 +288,12 @@ describe("MemoryStorage", () => {
         messageNumber: 0,
       },
       previousSendingChainLength: 0,
-      skippedMessageKeys: new Map([["key1", { messageKey: new Uint8Array([1, 2, 3]), timestamp: Date.now() }]]),
+      skippedMessageKeys: new Map([
+        [
+          "key1",
+          { messageKey: new Uint8Array([1, 2, 3]), timestamp: Date.now() },
+        ],
+      ]),
       highestReceivedMessageNumber: -1,
       maxSkippedMessages: 100,
       createdAt: Date.now(),
@@ -295,7 +316,10 @@ describe("MemoryStorage", () => {
     expect(retrieved?.receivedMessageIds).not.toBe(session.receivedMessageIds);
 
     // Verify that changes to the retrieved object don't affect the original
-    retrieved!.skippedMessageKeys.set("newKey", { messageKey: new Uint8Array([4, 5, 6]), timestamp: Date.now() });
+    retrieved!.skippedMessageKeys.set("newKey", {
+      messageKey: new Uint8Array([4, 5, 6]),
+      timestamp: Date.now(),
+    });
     retrieved!.receivedMessageIds.add("newMsg");
 
     expect(session.skippedMessageKeys.has("newKey")).toBe(false);

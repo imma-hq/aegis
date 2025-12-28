@@ -1,4 +1,4 @@
-import { Aegis, MemoryStorage } from "../src/index.js";
+import { Aegis, MemoryStorage } from "../dist"; // import { Aegis, MemoryStorage } from "@immahq/aegis";
 
 async function quickTest() {
   console.log("🔍 Quick E2EE & Replay Protection Test");
