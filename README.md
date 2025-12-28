@@ -71,8 +71,12 @@ const myStorage: StorageAdapter = {
 };
 
 // Initialize the library before any other operation
-import { E2EE } from "@immahq/aegis";
-const aegis = new E2EE(myStorage);
+import { Aegis, MemoryStorage } from "@immahq/aegis";
+import type {StorageAdapter} from "@immahq/aegis";
+
+//Plug in your preferred storage or use MemoryStorage
+//const memory = new MemoryStorage();
+const aegis = new Aegis(myStorage);
 ```
 
 > **Security Note**: The adapter will store secret key material. In production, always use platform-secured storage (e.g., iOS Keychain, Android Keystore, or a securely encrypted database).
