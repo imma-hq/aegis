@@ -26,6 +26,8 @@ npm install @immahq/aegis
 # or
 yarn add @immahq/aegis
 ```
+For React Native, you may need a
+[polyfill for getRandomValues](https://github.com/LinusU/react-native-get-random-values).
 
 ---
 
