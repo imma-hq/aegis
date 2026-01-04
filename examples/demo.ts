@@ -10,8 +10,9 @@ async function quickTest() {
 
   // Create identities
   console.log("1. Creating identities...");
-  const aliceIdentity = await alice.createIdentity();
-  const bobIdentity = await bob.createIdentity();
+  const aliceIdentity = await alice.createIdentity("alice-user-123");
+  console.log(aliceIdentity);
+  const bobIdentity = await bob.createIdentity("bob-user-456");
   console.log("   ✅ Identities created");
 
   // Establish session
@@ -98,6 +99,60 @@ async function quickTest() {
     console.log(
       `   ❌ Incorrect count: expected ${messages.length + 1}, got ${status.storedMessageIds}`,
     );
+    allSuccessful = false;
+  }
+
+  // Test key rotation
+  console.log("7. Testing key rotation...");
+  const originalIdentity = await alice.getIdentity();
+  console.log(
+    `   Original identity userId: ${originalIdentity.userId.substring(0, 16)}...`,
+  );
+
+  // Test rotating with a new userId to ensure the identity changes
+  const rotatedResult = await alice.rotateIdentity("alice-user-123-rotated");
+  const newIdentity = await alice.getIdentity();
+  console.log(
+    `   New identity userId: ${newIdentity.userId.substring(0, 16)}...`,
+  );
+
+  if (originalIdentity.userId !== newIdentity.userId) {
+    console.log("   ✅ Identity successfully rotated with new userId");
+
+    // Test that we can still create a new session with the rotated identity
+    const bobPublicBundle = await bob.getPublicBundle();
+    const newAliceSession = await alice.createSession(bobPublicBundle);
+    const newBobSession = await bob.createResponderSession(
+      await alice.getPublicBundle(),
+      newAliceSession.ciphertext,
+      newAliceSession.confirmationMac,
+    );
+
+    await alice.confirmSession(
+      newAliceSession.sessionId,
+      newBobSession.confirmationMac,
+    );
+
+    // Test message encryption/decryption with new keys
+    const newTestMessage = "Message after key rotation";
+    const newEncrypted = await alice.encryptMessage(
+      newAliceSession.sessionId,
+      newTestMessage,
+    );
+    const newDecrypted = await bob.decryptMessage(
+      newBobSession.sessionId,
+      newEncrypted,
+    );
+    const newDecryptedText = new TextDecoder().decode(newDecrypted.plaintext);
+
+    if (newTestMessage === newDecryptedText) {
+      console.log("   ✅ New session with rotated keys works correctly");
+    } else {
+      console.log("   ❌ New session with rotated keys failed");
+      allSuccessful = false;
+    }
+  } else {
+    console.log("   ❌ Identity rotation failed - userIds are the same");
     allSuccessful = false;
   }
 

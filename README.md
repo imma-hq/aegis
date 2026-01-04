@@ -1,11 +1,11 @@
-# **Aegis** 
+# Aegis - Post-Quantum Secure E2EE Library
+
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/68e739263f9740b3be6693e795d17d0a)](https://app.codacy.com/gh/imma-hq/aegis/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)![git workflow](https://github.com/imma-hq/aegis/actions/workflows/ci.yml/badge.svg?branch=main)
 ![NPM Version](https://img.shields.io/npm/v/@immahq/aegis)
 
-**Aegis** is a lightweight, storage-agnostic library for client-side End-to-End (E2E) encryption, designed for future security. It combines the NIST-standardized ML-KEM 768 algorithm for quantum-resistant key agreement with high-performance symmetric cryptography (ChaCha20-Poly1305, Blake3) to provide secure 1:1 sessions and scalable group messaging.
+**Aegis** is a lightweight, storage-agnostic library for client-side End-to-End (E2E) encryption, designed for future security. It combines the NIST-standardized ML-KEM 768 algorithm for quantum-resistant key agreement with high-performance symmetric cryptography (ChaCha20-Poly1305, Blake3) to provide secure 1:1 sessions and scalable group messaging with advanced features like identity management, key rotation, and replay protection.
 
 ---
-
 
 ## **Core Features**
 
@@ -13,6 +13,9 @@
 - **Storage-Agnostic**: You provide a simple key-value storage adapter (e.g., AsyncStorage, LocalStorage, SQLite, SecureStore).
 - **Modern Cryptography**: Symmetric ratchets for forward secrecy and Sender Keys for O(1) group encryption.
 - **Enhanced Security**: Implements proper group key encryption, pre-key signature verification, and secure group membership protocols.
+- **Identity Management**: Create identities with specific userIds for better user correlation and management.
+- **Key Rotation**: Supports identity rotation with option to maintain same userId or assign new ones.
+- **Replay Protection**: Built-in protection against message replay attacks.
 - **Minimal Dependencies**: Relies on robust, well-audited libraries like `@noble/curves` and `@noble/hashes`.
 
 ---
@@ -26,6 +29,7 @@ npm install @immahq/aegis
 # or
 yarn add @immahq/aegis
 ```
+
 For React Native, you may need a
 [polyfill for getRandomValues](https://github.com/LinusU/react-native-get-random-values).
 
@@ -87,7 +91,8 @@ A user identity consists of a post-quantum KEM key pair, a signing key pair, and
 
 ```typescript
 // This creates and automatically saves the identity to your storage
-const { identity, publicBundle } = await aegis.createIdentity();
+// Optionally specify a userId for better user correlation
+const { identity, publicBundle } = await aegis.createIdentity("user-123");
 console.log("Your Public Bundle:", publicBundle);
 ```
 
@@ -141,7 +146,27 @@ const plaintext = await aegis.decryptMessage(sessionId, encryptedMessage);
 console.log(plaintext); // "Hello, Bob! This is a secret."
 ```
 
-### **5. Group Messaging with Enhanced Security**
+### **5. Identity Management and Key Rotation**
+
+Aegis now supports creating identities with specific userIds and rotating identities while maintaining or changing the userId.
+
+#### **Rotate Identity with Same UserId**
+
+```typescript
+// Rotate identity but keep the same userId
+const rotatedResult = await aegis.rotateIdentity("user-123");
+console.log("Identity rotated with same userId:", rotatedResult.identity.userId);
+```
+
+#### **Rotate Identity with New UserId**
+
+```typescript
+// Rotate identity and assign a new userId
+const newRotatedResult = await aegis.rotateIdentity("new-user-456");
+console.log("Identity rotated with new userId:", newRotatedResult.identity.userId);
+```
+
+### **6. Group Messaging with Enhanced Security**
 
 Aegis uses the Sender Key protocol for efficient group messaging, where each member encrypts a message once for the entire group. With enhanced security features, group keys are now properly encrypted with member public keys and pre-key signatures are verified.
 
@@ -196,10 +221,10 @@ console.log(new TextDecoder().decode(groupPlaintext)); // "Dinner at 8 PM!"
 
 ### **Identity Management**
 
-- **`aegis.createIdentity(): Promise<{ identity, publicBundle }>`**
+- **`aegis.createIdentity(userId?: string): Promise<{ identity, publicBundle }>`** - Creates a new identity with optional userId
 - **`aegis.getIdentity(): Promise<Identity>`**
 - **`aegis.getPublicBundle(): Promise<PublicBundle>`**
-- **`aegis.rotateIdentity(): Promise<{ identity, publicBundle }>`**
+- **`aegis.rotateIdentity(userId?: string): Promise<{ identity, publicBundle }>`** - Rotates identity with optional userId
 
 ### **1:1 Sessions**
 
@@ -224,8 +249,11 @@ console.log(new TextDecoder().decode(groupPlaintext)); // "Dinner at 8 PM!"
 
 ## **Testing and Examples**
 
+- **Run All Tests**: `npm test`
 - **Run Sample Flow**: `npm run sample`
   - This executes `examples/usage.ts`, demonstrating a complete flow: identity creation, session handshake, 1:1 messaging, and group setup.
+- **Run Benchmarks**: `npm run benchmark`
+  - Executes performance benchmarks for various operations including identity creation, session establishment, message encryption/decryption, and group operations.
 
 ---
 
@@ -247,6 +275,21 @@ Aegis is built on a hybrid model:
 - **One-Time Pre-Keys (OTPKs)**: The `getPublicBundle()` function returns a pre-key. Your server should track used keys and ensure they are rotated.
 - **Group Key Encryption**: Group shared keys are properly encrypted using ML-KEM with each member's public key, ensuring that only authorized group members can access the group key.
 - **Storage Security**: The storage adapter you provide holds all secret keys. **You are responsible for its security.** Use platform-backed secure storage.
+- **Identity Management**: When creating identities with specific userIds, ensure proper validation and correlation with your application's user system.
+
+---
+
+## **Performance & Benchmarks**
+
+Aegis includes comprehensive benchmarking to measure performance across various operations:
+
+- **Identity Creation**: ~30-50ms per operation
+- **Session Establishment**: ~25-50ms per operation
+- **Message Encryption/Decryption**: ~30-70ms per round-trip
+- **Group Operations**: ~40-130ms depending on group size
+- **Ratchet Operations**: ~30-60ms per operation
+
+Run `npm run benchmark` to see performance metrics on your system.
 
 ---
 
@@ -258,6 +301,7 @@ We welcome contributions. Priority areas include:
 - Improved examples for cross-platform secure storage.
 - Advanced group management features (admin roles, permissions, etc.).
 - Performance optimizations for large group messaging.
+- Additional storage adapters for popular databases and platforms.
 
 ---
 

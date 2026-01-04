@@ -58,8 +58,8 @@ export class E2EE {
         this.groupManager = new GroupManager(storage);
         Logger.log("E2EE", "Initialized with storage adapter");
     }
-    async createIdentity() {
-        return this.identityManager.createIdentity();
+    async createIdentity(userId) {
+        return this.identityManager.createIdentity(userId);
     }
     async getIdentity() {
         return this.identityManager.getIdentity();
@@ -67,8 +67,8 @@ export class E2EE {
     async getPublicBundle() {
         return this.identityManager.getPublicBundle();
     }
-    async rotateIdentity() {
-        return this.identityManager.rotateIdentity();
+    async rotateIdentity(userId) {
+        return this.identityManager.rotateIdentity(userId);
     }
     async createSession(peerBundle) {
         const identity = await this.identityManager.getIdentity();

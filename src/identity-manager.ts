@@ -16,7 +16,7 @@ export class IdentityManager {
     this.preKeyManager = new PreKeyManager();
   }
 
-  async createIdentity(): Promise<{
+  async createIdentity(userId?: string): Promise<{
     identity: Identity;
     publicBundle: PublicBundle;
   }> {
@@ -26,11 +26,14 @@ export class IdentityManager {
       const kemKeyPair = ml_kem768.keygen();
       const dsaKeyPair = ml_dsa65.keygen();
 
-      const userId = bytesToHex(
+      // If userId is provided, use it; otherwise generate one from public keys
+      const generatedUserId = bytesToHex(
         blake3(concatBytes(kemKeyPair.publicKey, dsaKeyPair.publicKey), {
           dkLen: 32,
         }),
       );
+
+      const finalUserId = userId || generatedUserId;
 
       const preKeyPair = ml_kem768.keygen();
       const preKeySignature = ml_dsa65.sign(
@@ -51,13 +54,13 @@ export class IdentityManager {
       const identity: Identity = {
         kemKeyPair,
         dsaKeyPair,
-        userId,
+        userId: finalUserId,
         createdAt: Date.now(),
         preKeySecret: preKeyPair.secretKey,
       };
 
       const publicBundle: PublicBundle = {
-        userId,
+        userId: finalUserId,
         kemPublicKey: kemKeyPair.publicKey,
         dsaPublicKey: dsaKeyPair.publicKey,
         preKey: {
@@ -71,7 +74,7 @@ export class IdentityManager {
       await this.storage.saveIdentity(identity);
 
       Logger.log("Identity", "Identity created successfully", {
-        userId: userId.substring(0, 16) + "...",
+        userId: finalUserId.substring(0, 16) + "...",
       });
 
       return { identity, publicBundle };
@@ -119,11 +122,16 @@ export class IdentityManager {
     };
   }
 
-  async rotateIdentity(): Promise<{
+  async rotateIdentity(userId?: string): Promise<{
     identity: Identity;
     publicBundle: PublicBundle;
   }> {
-    const result = await this.createIdentity();
+    // If userId is provided, use it; otherwise maintain the current userId
+    const currentIdentity = await this.storage.getIdentity();
+    const finalUserId =
+      userId || (currentIdentity ? currentIdentity.userId : undefined);
+
+    const result = await this.createIdentity(finalUserId);
     await this.preKeyManager.clear();
     return result;
   }

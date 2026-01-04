@@ -35,8 +35,8 @@ export class E2EE {
     Logger.log("E2EE", "Initialized with storage adapter");
   }
 
-  async createIdentity() {
-    return this.identityManager.createIdentity();
+  async createIdentity(userId?: string) {
+    return this.identityManager.createIdentity(userId);
   }
 
   async getIdentity() {
@@ -47,8 +47,8 @@ export class E2EE {
     return this.identityManager.getPublicBundle();
   }
 
-  async rotateIdentity() {
-    return this.identityManager.rotateIdentity();
+  async rotateIdentity(userId?: string) {
+    return this.identityManager.rotateIdentity(userId);
   }
 
   async createSession(peerBundle: PublicBundle) {

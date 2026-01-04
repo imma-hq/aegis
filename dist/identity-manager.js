@@ -22,14 +22,16 @@ export class IdentityManager {
         this.storage = storage;
         this.preKeyManager = new PreKeyManager();
     }
-    async createIdentity() {
+    async createIdentity(userId) {
         try {
             Logger.log("Identity", "Creating new identity");
             const kemKeyPair = ml_kem768.keygen();
             const dsaKeyPair = ml_dsa65.keygen();
-            const userId = bytesToHex(blake3(concatBytes(kemKeyPair.publicKey, dsaKeyPair.publicKey), {
+            // If userId is provided, use it; otherwise generate one from public keys
+            const generatedUserId = bytesToHex(blake3(concatBytes(kemKeyPair.publicKey, dsaKeyPair.publicKey), {
                 dkLen: 32,
             }));
+            const finalUserId = userId || generatedUserId;
             const preKeyPair = ml_kem768.keygen();
             const preKeySignature = ml_dsa65.sign(preKeyPair.publicKey, dsaKeyPair.secretKey);
             const preKey = {
@@ -43,12 +45,12 @@ export class IdentityManager {
             const identity = {
                 kemKeyPair,
                 dsaKeyPair,
-                userId,
+                userId: finalUserId,
                 createdAt: Date.now(),
                 preKeySecret: preKeyPair.secretKey,
             };
             const publicBundle = {
-                userId,
+                userId: finalUserId,
                 kemPublicKey: kemKeyPair.publicKey,
                 dsaPublicKey: dsaKeyPair.publicKey,
                 preKey: {
@@ -60,7 +62,7 @@ export class IdentityManager {
             };
             await this.storage.saveIdentity(identity);
             Logger.log("Identity", "Identity created successfully", {
-                userId: userId.substring(0, 16) + "...",
+                userId: finalUserId.substring(0, 16) + "...",
             });
             return { identity, publicBundle };
         }
@@ -104,8 +106,11 @@ export class IdentityManager {
             createdAt: identity.createdAt,
         };
     }
-    async rotateIdentity() {
-        const result = await this.createIdentity();
+    async rotateIdentity(userId) {
+        // If userId is provided, use it; otherwise maintain the current userId
+        const currentIdentity = await this.storage.getIdentity();
+        const finalUserId = userId || (currentIdentity ? currentIdentity.userId : undefined);
+        const result = await this.createIdentity(finalUserId);
         await this.preKeyManager.clear();
         return result;
     }

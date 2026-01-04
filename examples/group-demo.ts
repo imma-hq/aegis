@@ -36,9 +36,9 @@ async function groupTest() {
 
   // Create identities
   console.log("1. Creating identities...");
-  await alice.createIdentity();
-  await bob.createIdentity();
-  await charlie.createIdentity();
+  await alice.createIdentity("alice-user-123");
+  await bob.createIdentity("bob-user-456");
+  await charlie.createIdentity("charlie-user-789");
 
   // Get the identities with their userIds
   const aliceIdentity = await alice.getIdentity();
@@ -228,6 +228,118 @@ async function groupTest() {
   // Get all groups
   const allGroups = await alice.getGroups();
   console.log(`   ✅ Alice has ${allGroups.length} group(s)`);
+
+  // Test key rotation in group context
+  console.log("8. Testing key rotation in group context...");
+  const originalIdentity = await alice.getIdentity();
+  console.log(
+    `   Original identity userId: ${originalIdentity.userId.substring(0, 16)}...`,
+  );
+
+  const rotatedResult = await alice.rotateIdentity("alice-user-123-rotated");
+  const newIdentity = await alice.getIdentity();
+  console.log(
+    `   New identity userId: ${newIdentity.userId.substring(0, 16)}...`,
+  );
+
+  if (originalIdentity.userId !== newIdentity.userId) {
+    console.log("   ✅ Identity successfully rotated in group context");
+
+    // After rotation, we need to create a new group with the new identity
+    // since the old group keys are no longer valid with the rotated identity
+    console.log("   Creating new group with rotated identity...");
+
+    // Create new maps for KEM and DSA public keys with the new identity
+    const newMemberKemPublicKeys = new Map<string, Uint8Array>();
+    newMemberKemPublicKeys.set(
+      newIdentity.userId,
+      newIdentity.kemKeyPair.publicKey,
+    );
+    newMemberKemPublicKeys.set(
+      bobIdentity.userId,
+      bobIdentity.kemKeyPair.publicKey,
+    );
+    newMemberKemPublicKeys.set(
+      charlieIdentity.userId,
+      charlieIdentity.kemKeyPair.publicKey,
+    );
+
+    const newMemberDsaPublicKeys = new Map<string, Uint8Array>();
+    newMemberDsaPublicKeys.set(
+      newIdentity.userId,
+      newIdentity.dsaKeyPair.publicKey,
+    );
+    newMemberDsaPublicKeys.set(
+      bobIdentity.userId,
+      bobIdentity.dsaKeyPair.publicKey,
+    );
+    newMemberDsaPublicKeys.set(
+      charlieIdentity.userId,
+      charlieIdentity.dsaKeyPair.publicKey,
+    );
+
+    const newGroup = await alice.createGroup(
+      "Test Group After Rotation",
+      [newIdentity.userId, bobIdentity.userId, charlieIdentity.userId],
+      newMemberKemPublicKeys,
+      newMemberDsaPublicKeys,
+    );
+
+    // Update the DSA public keys in the group data for signature verification
+    const newGroupFromStorage = await aliceStorage.getSession(newGroup.groupId);
+    if (newGroupFromStorage && newGroupFromStorage.groupData) {
+      const updatedGroupData = {
+        ...newGroupFromStorage.groupData,
+        memberDsaPublicKeys: [
+          [newIdentity.userId, newIdentity.dsaKeyPair.publicKey],
+          [bobIdentity.userId, bobIdentity.dsaKeyPair.publicKey],
+          [charlieIdentity.userId, charlieIdentity.dsaKeyPair.publicKey],
+        ] as [string, Uint8Array][],
+      };
+
+      // Update the new group in all storages
+      for (const storage of allStorages) {
+        const existingSession = await storage.getSession(newGroup.groupId);
+        if (existingSession) {
+          await storage.saveSession(newGroup.groupId, {
+            ...existingSession,
+            groupData: updatedGroupData,
+          });
+        }
+      }
+    }
+
+    // Test group messaging with the new rotated identity
+    const rotationTestMessage = "Message from rotated identity";
+    const encryptedRotationMessage = await alice.encryptGroupMessage(
+      newGroup.groupId,
+      rotationTestMessage,
+    );
+
+    // Sync group data after sending the message
+    await syncGroupData();
+
+    // Bob receives and decrypts the message from the rotated identity
+    const bobDecryptedFromRotated = await bob.decryptGroupMessage(
+      newGroup.groupId,
+      encryptedRotationMessage,
+    );
+    const bobDecryptedTextFromRotated = new TextDecoder().decode(
+      bobDecryptedFromRotated,
+    );
+
+    if (rotationTestMessage === bobDecryptedTextFromRotated) {
+      console.log(
+        "   ✅ Group messaging works correctly with rotated identity",
+      );
+    } else {
+      console.log("   ❌ Group messaging failed with rotated identity");
+      allSuccessful = false;
+    }
+  } else {
+    console.log("   ❌ Identity rotation failed - userIds are the same");
+    allSuccessful = false;
+  }
 
   return allSuccessful;
 }

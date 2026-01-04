@@ -42,9 +42,9 @@ describe("E2EE", () => {
       expect(retrievedBundle).toEqual(publicBundle);
     });
 
-    it("should rotate identity", async () => {
+    it("should rotate identity with new userId", async () => {
       const initialIdentity = await alice.createIdentity();
-      const rotatedResult = await alice.rotateIdentity();
+      const rotatedResult = await alice.rotateIdentity("new-user-id");
 
       expect(rotatedResult.identity.userId).not.toEqual(
         initialIdentity.identity.userId,
@@ -52,6 +52,15 @@ describe("E2EE", () => {
       expect(rotatedResult.publicBundle.userId).not.toEqual(
         initialIdentity.publicBundle.userId,
       );
+    });
+
+    it("should rotate identity with same userId", async () => {
+      const initialIdentity = await alice.createIdentity();
+      const initialUserId = initialIdentity.identity.userId;
+      const rotatedResult = await alice.rotateIdentity(initialUserId);
+
+      expect(rotatedResult.identity.userId).toEqual(initialUserId);
+      expect(rotatedResult.publicBundle.userId).toEqual(initialUserId);
     });
   });
 
