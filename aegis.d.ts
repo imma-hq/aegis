@@ -1,6 +1,5 @@
 declare module "@immahq/aegis" {
   export interface MemoryStorage extends StorageAdapter {}
-
   export interface Identity {
     kemKeyPair: { publicKey: Uint8Array; secretKey: Uint8Array };
     dsaKeyPair: { publicKey: Uint8Array; secretKey: Uint8Array };
