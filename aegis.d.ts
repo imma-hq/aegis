@@ -1,6 +1,249 @@
 declare module "@immahq/aegis" {
-  export class Aegis {}
-  export interface MemoryStorage extends StorageAdapter {}
+  export class Aegis {
+    constructor(storage: StorageAdapter);
+    createIdentity(userId?: string): Promise<AegisIdentity>;
+    getIdentity(): Promise<Identity>;
+    rotateIdentity(userId?: string): Promise<AegisIdentity>;
+    getPublicBundle(): Promise<PublicBundle>;
+    createSession(publicBundle: PublicBundle): Promise<{
+      sessionId: string;
+      ciphertext: Uint8Array;
+      confirmationMac: Uint8Array;
+    }>;
+    createResponderSession(
+      publicBundle: PublicBundle,
+      ciphertext: Uint8Array,
+      initiatorConfirmationMac?: Uint8Array,
+    ): Promise<{
+      sessionId: string;
+      confirmationMac: Uint8Array;
+      isValid: boolean;
+    }>;
+    confirmSession(
+      sessionId: string,
+      responderConfirmationMac: Uint8Array,
+    ): Promise<boolean>;
+    getSessions(): Promise<Session[]>;
+    cleanupOldSessions(maxAge?: number): Promise<void>;
+    encryptMessage(
+      sessionId: string,
+      plaintext: string | Uint8Array,
+    ): Promise<EncryptedMessage>;
+    decryptMessage(
+      sessionId: string,
+      encrypted: EncryptedMessage,
+    ): Promise<{
+      plaintext: Uint8Array;
+      needsConfirmation?: boolean;
+    }>;
+    triggerRatchet(sessionId: string): Promise<void>;
+    getReplayProtectionStatus(sessionId: string): Promise<{
+      storedMessageIds: number;
+      lastProcessedTimestamp: number;
+      replayWindowSize: number;
+    }>;
+    getConfirmationMac(sessionId: string): Promise<Uint8Array | null>;
+    getStorage(): StorageAdapter;
+    createGroup(
+      name: string,
+      members: string[],
+      memberKemPublicKeys: Map<string, Uint8Array>,
+      memberDsaPublicKeys: Map<string, Uint8Array>,
+    ): Promise<Group>;
+    addGroupMember(
+      groupId: string,
+      userId: string,
+      session: Session,
+      userPublicKey: Uint8Array,
+    ): Promise<void>;
+    removeGroupMember(groupId: string, userId: string): Promise<void>;
+    updateGroupKey(groupId: string): Promise<void>;
+    encryptGroupMessage(
+      groupId: string,
+      message: string | Uint8Array,
+    ): Promise<GroupMessage>;
+    decryptGroupMessage(
+      groupId: string,
+      encrypted: GroupMessage,
+    ): Promise<Uint8Array>;
+    getGroup(groupId: string): Promise<Group | null>;
+    getGroups(): Promise<Group[]>;
+  }
+
+  export class MemoryStorage implements StorageAdapter {
+    saveIdentity(identity: Identity): Promise<void>;
+    getIdentity(): Promise<Identity | null>;
+    deleteIdentity(): Promise<void>;
+    saveSession(sessionId: string, session: Session): Promise<void>;
+    getSession(sessionId: string): Promise<Session | null>;
+    deleteSession(sessionId: string): Promise<void>;
+    listSessions(): Promise<string[]>;
+    deleteAllSessions(): Promise<void>;
+  }
+
+  export class Logger {
+    static log(
+      component: string,
+      message: string,
+      data?: Record<string, any>,
+    ): void;
+    static error(component: string, message: string, error?: any): void;
+    static warn(
+      component: string,
+      message: string,
+      data?: Record<string, any>,
+    ): void;
+  }
+
+  export class KemRatchet {}
+
+  export class SessionKeyExchange {
+    static createInitiatorSession(
+      identity: Identity,
+      peerBundle: PublicBundle,
+    ): {
+      sessionId: string;
+      rootKey: Uint8Array;
+      sendingChainKey: Uint8Array;
+      receivingChainKey: Uint8Array;
+      ciphertext: Uint8Array;
+      confirmationMac: Uint8Array;
+    };
+    static createResponderSession(
+      identity: Identity,
+      peerBundle: PublicBundle,
+      ciphertext: Uint8Array,
+      initiatorConfirmationMac?: Uint8Array,
+    ): {
+      sessionId: string;
+      rootKey: Uint8Array;
+      sendingChainKey: Uint8Array;
+      receivingChainKey: Uint8Array;
+      confirmationMac: Uint8Array;
+      isValid: boolean;
+    };
+    static verifyKeyConfirmation(
+      sessionId: string,
+      rootKey: Uint8Array,
+      receivingChainKey: Uint8Array,
+      confirmationMac: Uint8Array,
+    ): boolean;
+  }
+
+  export class IdentityManager {
+    constructor(storage: StorageAdapter);
+    createIdentity(userId?: string): Promise<AegisIdentity>;
+    getIdentity(): Promise<Identity>;
+    getPublicBundle(): Promise<PublicBundle>;
+    rotateIdentity(userId?: string): Promise<AegisIdentity>;
+  }
+
+  export class SessionManager {
+    constructor(storage: StorageAdapter);
+    createSession(
+      identity: Identity,
+      peerBundle: PublicBundle,
+    ): Promise<{
+      sessionId: string;
+      ciphertext: Uint8Array;
+      confirmationMac: Uint8Array;
+    }>;
+    createResponderSession(
+      identity: Identity,
+      peerBundle: PublicBundle,
+      ciphertext: Uint8Array,
+      initiatorConfirmationMac?: Uint8Array,
+    ): Promise<{
+      sessionId: string;
+      confirmationMac: Uint8Array;
+      isValid: boolean;
+    }>;
+    confirmSession(
+      sessionId: string,
+      responderConfirmationMac: Uint8Array,
+    ): Promise<boolean>;
+    getSessions(): Promise<Session[]>;
+    cleanupOldSessions(maxAge?: number): Promise<void>;
+  }
+
+  export class CryptoManager {
+    constructor(storage: StorageAdapter);
+  }
+
+  export class RatchetManager {
+    shouldPerformSendingRatchet(session: Session): boolean;
+    performSendingRatchet(session: Session): Session;
+    needsReceivingRatchet(session: Session, header: any): boolean;
+    performReceivingRatchet(
+      session: Session,
+      kemCiphertext: Uint8Array,
+    ): Session;
+    applyPendingRatchet(session: Session): Session;
+    getDecryptionChainForRatchetMessage(session: Session): RatchetChain | null;
+    triggerRatchet(sessionId: string, session: Session): Promise<Session>;
+  }
+
+  export class ReplayProtection {
+    getSkippedKeyId(
+      ratchetPublicKey: Uint8Array,
+      messageNumber: number,
+    ): string;
+    storeReceivedMessageId(session: Session, messageId: string): void;
+    cleanupSkippedKeys(session: Session): void;
+    getReplayProtectionStatus(
+      sessionId: string,
+      session: Session,
+    ): Promise<{
+      storedMessageIds: number;
+      lastProcessedTimestamp: number;
+      replayWindowSize: number;
+    }>;
+  }
+
+  export class GroupManager {
+    constructor(storage: StorageAdapter);
+    initialize(identity: Identity): Promise<void>;
+    createGroup(
+      name: string,
+      members: string[],
+      memberKemPublicKeys: Map<string, Uint8Array>,
+      memberDsaPublicKeys: Map<string, Uint8Array>,
+    ): Promise<Group>;
+    addMember(
+      groupId: string,
+      userId: string,
+      session: Session,
+      userPublicKey: Uint8Array,
+    ): Promise<void>;
+    removeMember(groupId: string, userId: string): Promise<void>;
+    updateGroupKey(groupId: string): Promise<void>;
+    encryptMessage(
+      groupId: string,
+      message: string | Uint8Array,
+    ): Promise<GroupMessage>;
+    decryptMessage(
+      groupId: string,
+      encrypted: GroupMessage,
+    ): Promise<Uint8Array>;
+    getGroup(groupId: string): Promise<Group | null>;
+    getGroups(): Promise<Group[]>;
+  }
+
+  export interface AegisIdentity {
+    identity: Identity;
+    publicBundle: PublicBundle;
+  }
+
+  export interface StorageAdapter {
+    saveIdentity(identity: Identity): Promise<void>;
+    getIdentity(): Promise<Identity | null>;
+    deleteIdentity(): Promise<void>;
+    saveSession(sessionId: string, session: Session): Promise<void>;
+    getSession(sessionId: string): Promise<Session | null>;
+    deleteSession(sessionId: string): Promise<void>;
+    listSessions(): Promise<string[]>;
+    deleteAllSessions(): Promise<void>;
+  }
 
   export interface Identity {
     kemKeyPair: { publicKey: Uint8Array; secretKey: Uint8Array };
@@ -109,17 +352,6 @@ declare module "@immahq/aegis" {
     createdAt: number;
   }
 
-  export interface StorageAdapter {
-    saveIdentity(identity: Identity): Promise<void>;
-    getIdentity(): Promise<Identity | null>;
-    deleteIdentity(): Promise<void>;
-    saveSession(sessionId: string, session: Session): Promise<void>;
-    getSession(sessionId: string): Promise<Session | null>;
-    deleteSession(sessionId: string): Promise<void>;
-    listSessions(): Promise<string[]>;
-    deleteAllSessions(): Promise<void>;
-  }
-
   export interface KeyConfirmationData {
     sessionId: string;
     mac: Uint8Array;
@@ -168,32 +400,5 @@ declare module "@immahq/aegis" {
     canReceive: boolean;
     canManageMembers: boolean;
     canUpdateGroup: boolean;
-  }
-
-  export interface GroupManager {
-    createGroup(
-      name: string,
-      members: string[],
-      memberKemPublicKeys: Map<string, Uint8Array>,
-      memberDsaPublicKeys: Map<string, Uint8Array>,
-    ): Promise<Group>;
-    addMember(
-      groupId: string,
-      userId: string,
-      session: Session,
-      userPublicKey: Uint8Array,
-    ): Promise<void>;
-    removeMember(groupId: string, userId: string): Promise<void>;
-    updateGroupKey(groupId: string): Promise<void>;
-    encryptMessage(
-      groupId: string,
-      message: string | Uint8Array,
-    ): Promise<GroupMessage>;
-    decryptMessage(
-      groupId: string,
-      encrypted: GroupMessage,
-    ): Promise<Uint8Array>;
-    getGroup(groupId: string): Promise<Group | null>;
-    getGroups(): Promise<Group[]>;
   }
 }
