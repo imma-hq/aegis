@@ -5,23 +5,55 @@ on:
     types: [created]
 
 jobs:
-  publish-gpr:
+  publish-npm:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Get all history for version comparison
 
       - uses: actions/setup-node@v4
         with:
           node-version: "20.x"
           registry-url: "https://registry.npmjs.org"
 
-      - run: npm ci
+      - name: Check if version exists on npm
+        id: check_version
+        run: |
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: $CURRENT_VERSION"
 
+          # Try to get the published version from npm
+          if npm view @immahq/aegis@$CURRENT_VERSION version > /dev/null 2>&1; then
+            echo "Version $CURRENT_VERSION already exists on npm"
+            echo "should_bump=true" >> $GITHUB_OUTPUT
+          else
+            echo "Version $CURRENT_VERSION not found on npm"
+            echo "should_bump=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version if needed
+        if: steps.check_version.outputs.should_bump == 'true'
+        run: |
+          # Bump patch version
+          npm version patch --no-git-tag-version
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          echo "Bumped to version: $NEW_VERSION"
+
+          # Commit the version bump
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add package.json
+          git commit -m "Bump version to $NEW_VERSION"
+          git push
+
+      - run: npm ci
       - run: npm run build
 
-      - run: npm publish --access public
+      - name: Publish to npm
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
