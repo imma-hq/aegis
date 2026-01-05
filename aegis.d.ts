@@ -1,3 +1,4 @@
+//Types
 declare module "@immahq/aegis" {
   export class Aegis {
     constructor(storage: StorageAdapter);
