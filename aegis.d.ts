@@ -1,5 +1,4 @@
 declare module "@immahq/aegis" {
-  export interface Aegis {}
   export interface MemoryStorage extends StorageAdapter {}
 
   export interface Identity {
