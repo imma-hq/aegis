@@ -1,5 +1,6 @@
 import type { StorageAdapter, Identity, Session } from "./types";
 
+//Default storage adapter for the SDK. Stores data in memory.
 export class MemoryStorage implements StorageAdapter {
   private identity: Identity | null = null;
   private sessions = new Map<string, Session>();

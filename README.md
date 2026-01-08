@@ -20,6 +20,8 @@
 
 ---
 
+
+
 ## **Installation**
 
 Install the library using npm, yarn, or pnpm.
@@ -35,7 +37,10 @@ For React Native, you may need a
 
 ---
 
-## **Quick Start**
+## **Setup**
+
+**Quick start**: Check [examples](/examples) for samples with browser, React Native, Electron, and Tauri
+
 
 ### **1. Implement a Storage Adapter**
 
@@ -217,8 +222,6 @@ console.log(new TextDecoder().decode(groupPlaintext)); // "Dinner at 8 PM!"
 
 ## **API Reference**
 
-### **Core & Configuration**
-
 ### **Identity Management**
 
 - **`aegis.createIdentity(userId?: string): Promise<{ identity, publicBundle }>`** - Creates a new identity with optional userId
@@ -250,10 +253,8 @@ console.log(new TextDecoder().decode(groupPlaintext)); // "Dinner at 8 PM!"
 ## **Testing and Examples**
 
 - **Run All Tests**: `npm test`
-- **Run Sample Flow**: `npm run sample`
-  - This executes `examples/usage.ts`, demonstrating a complete flow: identity creation, session handshake, 1:1 messaging, and group setup.
-- **Run Benchmarks**: `npm run benchmark`
-  - Executes performance benchmarks for various operations including identity creation, session establishment, message encryption/decryption, and group operations.
+- **Run peer messaging demo**: `npm run demo`
+- **Run group messaging demo**: `npm run demo:group`
 
 ---
 
@@ -276,32 +277,6 @@ Aegis is built on a hybrid model:
 - **Group Key Encryption**: Group shared keys are properly encrypted using ML-KEM with each member's public key, ensuring that only authorized group members can access the group key.
 - **Storage Security**: The storage adapter you provide holds all secret keys. **You are responsible for its security.** Use platform-backed secure storage.
 - **Identity Management**: When creating identities with specific userIds, ensure proper validation and correlation with your application's user system.
-
----
-
-## **Performance & Benchmarks**
-
-Aegis includes comprehensive benchmarking to measure performance across various operations:
-
-- **Identity Creation**: ~30-50ms per operation
-- **Session Establishment**: ~25-50ms per operation
-- **Message Encryption/Decryption**: ~30-70ms per round-trip
-- **Group Operations**: ~40-130ms depending on group size
-- **Ratchet Operations**: ~30-60ms per operation
-
-Run `npm run benchmark` to see performance metrics on your system.
-
----
-
-## **Contributing & Roadmap**
-
-We welcome contributions. Priority areas include:
-
-- Enhanced utilities for server-side OTPK lifecycle management.
-- Improved examples for cross-platform secure storage.
-- Advanced group management features (admin roles, permissions, etc.).
-- Performance optimizations for large group messaging.
-- Additional storage adapters for popular databases and platforms.
 
 ---
 

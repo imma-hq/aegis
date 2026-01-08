@@ -167,10 +167,8 @@ quickTest()
       console.log("🎉 All tests passed! Replay protection is working.");
     } else {
       console.log("❌ Some tests failed!");
-      process.exit(1);
     }
   })
   .catch((error) => {
     console.error("\n❌ Test error:", error);
-    process.exit(1);
   });

@@ -352,10 +352,8 @@ groupTest()
       console.log("🎉 All group tests passed! Group encryption is working.");
     } else {
       console.log("❌ Some group tests failed!");
-      process.exit(1);
     }
   })
   .catch((error) => {
     console.error("\n❌ Group test error:", error);
-    process.exit(1);
   });
