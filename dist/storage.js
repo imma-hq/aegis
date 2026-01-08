@@ -1,3 +1,4 @@
+//Default storage adapter for the SDK. Stores data in memory.
 export class MemoryStorage {
     constructor() {
         Object.defineProperty(this, "identity", {
