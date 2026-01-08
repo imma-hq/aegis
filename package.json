@@ -33,6 +33,7 @@
     "cryptography",
     "encryption",
     "e2e",
+    "e2ee",
     "end-to-end",
     "pqc",
     "post-quantum",
