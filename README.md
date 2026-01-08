@@ -16,7 +16,6 @@
 - **Identity Management**: Create identities with specific userIds for better user correlation and management.
 - **Key Rotation**: Supports identity rotation with option to maintain same userId or assign new ones.
 - **Replay Protection**: Built-in protection against message replay attacks.
-- **Minimal Dependencies**: Relies on robust, well-audited libraries like `@noble/curves` and `@noble/hashes`.
 
 ---
 
