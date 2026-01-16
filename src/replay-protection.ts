@@ -21,6 +21,19 @@ export class ReplayProtection {
         session.skippedMessageKeys.delete(keyId);
       }
     }
+
+    // Also limit the total number of skipped keys to prevent memory leaks
+    const maxSkippedKeys = 1000;
+    if (session.skippedMessageKeys.size > maxSkippedKeys) {
+      // Remove oldest entries if we exceed the limit
+      const entries = Array.from(session.skippedMessageKeys.entries()).sort(
+        (a, b) => a[1].timestamp - b[1].timestamp,
+      );
+      const toRemove = entries.slice(0, entries.length - maxSkippedKeys);
+      for (const [keyId] of toRemove) {
+        session.skippedMessageKeys.delete(keyId);
+      }
+    }
   }
 
   // Simple replay protection: Store received message IDs
@@ -29,9 +42,15 @@ export class ReplayProtection {
 
     // Keep the set size manageable
     if (session.receivedMessageIds.size > MAX_STORED_MESSAGE_IDS) {
-      // Remove oldest entries (Set doesn't have order, so we recreate)
+      // Remove oldest entries by converting to array and removing first elements
       const ids = Array.from(session.receivedMessageIds);
-      session.receivedMessageIds = new Set(ids.slice(-MAX_STORED_MESSAGE_IDS));
+      const idsToRemove = ids.slice(
+        0,
+        session.receivedMessageIds.size - MAX_STORED_MESSAGE_IDS,
+      );
+      for (const id of idsToRemove) {
+        session.receivedMessageIds.delete(id);
+      }
     }
   }
 

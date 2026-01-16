@@ -1,6 +1,6 @@
 {
   "name": "@immahq/aegis",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Lightweight, storage-agnostic library for client-side End-to-End (E2E) encryption",
   "type": "module",
   "main": "./dist/index.js",

@@ -23,5 +23,8 @@ export function validatePublicBundle(bundle) {
     }
 }
 export function serializeHeader(header) {
+    if (header === null || header === undefined) {
+        throw new Error("Header cannot be null or undefined");
+    }
     return utf8ToBytes(JSON.stringify(header));
 }

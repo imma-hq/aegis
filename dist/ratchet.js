@@ -74,7 +74,7 @@ export class KemRatchet {
     // Verify confirmation MAC
     static verifyConfirmationMac(sessionId, rootKey, chainKey, receivedMac, isResponse = false) {
         const expectedMac = this.generateConfirmationMac(sessionId, rootKey, chainKey, isResponse);
-        // Constant-time comparison
+        // Constant-time comparison to prevent timing attacks
         if (expectedMac.length !== receivedMac.length)
             return false;
         let result = 0;
@@ -123,8 +123,7 @@ export class KemRatchet {
         return ml_kem768.keygen();
     }
     // Check if we should perform a KEM ratchet
-    static shouldPerformRatchet(messageCount, lastRatchetTime, maxMessages = 100, maxTime = 7 * 24 * 60 * 60 * 1000 // 7 days
-    ) {
+    static shouldPerformRatchet(messageCount, lastRatchetTime, maxMessages = 100, maxTime = 7 * 24 * 60 * 60 * 1000) {
         const now = Date.now();
         return messageCount >= maxMessages || now - lastRatchetTime >= maxTime;
     }

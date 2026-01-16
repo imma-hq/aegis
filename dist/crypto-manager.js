@@ -280,6 +280,7 @@ export class CryptoManager {
                     updatedSession = applyPendingRatchet(updatedSession);
                 }
             }
+            // Ensure session state is properly updated atomically
             await updateSessionState(sessionId, updatedSession);
             Logger.log("Decrypt", "Message decrypted successfully", {
                 messageNumber: encrypted.header.messageNumber,

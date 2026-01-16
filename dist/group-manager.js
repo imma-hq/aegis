@@ -542,7 +542,7 @@ export class GroupManager {
         if (!group) {
             return null;
         }
-        return group.memberDsaPublicKeys.get(senderId) || null;
+        return group.memberDsaPublicKeys?.get(senderId) || null;
     }
     // Encrypt a key with a public key using ML-KEM
     async encryptKeyWithPublicKey(key, publicKey) {

@@ -434,6 +434,7 @@ export class CryptoManager {
         }
       }
 
+      // Ensure session state is properly updated atomically
       await updateSessionState(sessionId, updatedSession);
 
       Logger.log("Decrypt", "Message decrypted successfully", {

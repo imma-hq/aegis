@@ -693,7 +693,7 @@ export class GroupManager {
       return null;
     }
 
-    return group.memberDsaPublicKeys.get(senderId) || null;
+    return group.memberDsaPublicKeys?.get(senderId) || null;
   }
 
   // Encrypt a key with a public key using ML-KEM
