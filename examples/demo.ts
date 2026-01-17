@@ -11,7 +11,6 @@ async function quickTest() {
   // Create identities
   console.log("1. Creating identities...");
   const aliceIdentity = await alice.createIdentity("alice-user-123");
-  console.log(aliceIdentity);
   const bobIdentity = await bob.createIdentity("bob-user-456");
   console.log("   ✅ Identities created");
 

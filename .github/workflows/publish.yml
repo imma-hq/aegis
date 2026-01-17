@@ -18,6 +18,18 @@ jobs:
           node-version: "20.x"
           registry-url: "https://registry.npmjs.org"
 
+      # Configure npm to use the correct registry for scoped packages
+      - name: Configure npm for scoped package
+        run: |
+          npm config set @immahq:registry https://registry.npmjs.org/
+
+      # Verify the version before publishing
+      - name: Check package version
+        run: |
+          echo "Package version from package.json:"
+          node -p "require('./package.json').version"
+          echo "Git tag: ${{ github.ref }}"
+
       - run: npm ci
 
       - run: npm run build
