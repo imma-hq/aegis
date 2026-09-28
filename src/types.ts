@@ -61,6 +61,7 @@ export interface Session {
   lastUsed: number;
   isInitiator: boolean;
   ratchetCount: number;
+  lastRatchetAt?: number;
   state: "CREATED" | "KEY_CONFIRMED" | "ACTIVE" | "RATCHET_PENDING" | "ERROR";
   confirmed: boolean;
   confirmationMac?: Uint8Array;
@@ -171,19 +172,19 @@ export interface GroupManager {
     name: string,
     members: string[],
     memberKemPublicKeys: Map<string, Uint8Array>,
-    memberDsaPublicKeys: Map<string, Uint8Array>
+    memberDsaPublicKeys: Map<string, Uint8Array>,
   ): Promise<Group>;
   addMember(
     groupId: string,
     userId: string,
     session: Session,
-    userPublicKey: Uint8Array
+    userPublicKey: Uint8Array,
   ): Promise<void>;
   removeMember(groupId: string, userId: string): Promise<void>;
   updateGroupKey(groupId: string): Promise<void>;
   encryptMessage(
     groupId: string,
-    message: string | Uint8Array
+    message: string | Uint8Array,
   ): Promise<GroupMessage>;
   decryptMessage(groupId: string, encrypted: GroupMessage): Promise<Uint8Array>;
   getGroup(groupId: string): Promise<Group | null>;

@@ -12,7 +12,7 @@ import type {
   StorageAdapter,
 } from "./types";
 import { Logger } from "./logger";
-import { MAX_MESSAGE_AGE } from "./constants";
+import { MAX_CLOCK_SKEW, MAX_MESSAGE_AGE } from "./constants";
 
 export class GroupManager {
   private storage: StorageAdapter;
@@ -181,15 +181,11 @@ export class GroupManager {
     group.members.push(userId);
     group.lastUpdated = Date.now();
 
-    // Encrypt the shared key with the new member's public key
-    const encryptedSharedKey = await this.encryptKeyWithPublicKey(
-      group.sharedKey,
-      userPublicKey,
-    );
-    group.memberKeys.set(userId, encryptedSharedKey);
-
     // Update member public keys with the provided public key
     group.memberPublicKeys.set(userId, userPublicKey);
+
+    // Rotate the group key so the new member cannot read prior history.
+    await this.rekeyGroup(group);
 
     // Save updated group to storage
     await this.storage.saveSession(groupId, {
@@ -260,10 +256,13 @@ export class GroupManager {
     group.members.splice(memberIndex, 1);
     group.lastUpdated = Date.now();
 
-    // Remove member key
+    // Remove the member's key material
     group.memberKeys.delete(userId);
-    // Remove member public key
     group.memberPublicKeys.delete(userId);
+    group.memberDsaPublicKeys.delete(userId);
+
+    // Rotate the group key so the removed member cannot read later messages.
+    await this.rekeyGroup(group);
 
     // Save updated group to storage
     await this.storage.saveSession(groupId, {
@@ -324,28 +323,8 @@ export class GroupManager {
       throw new Error("Only group owner can update group key");
     }
 
-    // Generate new shared key
-    const newSharedKey = randomBytes(32);
-
-    // Update member keys for all members - encrypt the new key with each member's public key
-    for (const memberId of group.members) {
-      const memberPublicKey = group.memberPublicKeys.get(memberId);
-      if (!memberPublicKey) {
-        throw new Error(`Public key not found for member: ${memberId}`);
-      }
-
-      // Encrypt the new shared key with the member's public key
-      const encryptedNewSharedKey = await this.encryptKeyWithPublicKey(
-        newSharedKey,
-        memberPublicKey,
-      );
-      group.memberKeys.set(memberId, encryptedNewSharedKey);
-    }
-    // Note: We don't update public keys when updating the group key
-
-    // Update the group shared key
-    group.sharedKey = newSharedKey;
-    group.lastUpdated = Date.now();
+    // Rotate the group key for all current members.
+    await this.rekeyGroup(group);
 
     // Save updated group to storage
     await this.storage.saveSession(groupId, {
@@ -552,6 +531,11 @@ export class GroupManager {
     if (messageAge > MAX_MESSAGE_AGE) {
       throw new Error(`Message too old: ${Math.round(messageAge / 1000)}s`);
     }
+    if (messageAge < -MAX_CLOCK_SKEW) {
+      throw new Error(
+        `Message timestamp is too far in the future: ${Math.round(-messageAge / 1000)}s`,
+      );
+    }
 
     // Check message ordering/replay protection
     const lastMessageNumber =
@@ -694,6 +678,31 @@ export class GroupManager {
     }
 
     return group.memberDsaPublicKeys?.get(senderId) || null;
+  }
+
+  /**
+   * Generate a fresh group key and wrap it for every current member. Rotating on
+   * membership changes keeps prior history out of reach of late joiners and
+   * later messages out of reach of removed members.
+   */
+  private async rekeyGroup(group: Group): Promise<void> {
+    const newSharedKey = randomBytes(32);
+
+    for (const memberId of group.members) {
+      const memberPublicKey = group.memberPublicKeys.get(memberId);
+      if (!memberPublicKey) {
+        throw new Error(`Public key not found for member: ${memberId}`);
+      }
+
+      const wrappedKey = await this.encryptKeyWithPublicKey(
+        newSharedKey,
+        memberPublicKey,
+      );
+      group.memberKeys.set(memberId, wrappedKey);
+    }
+
+    group.sharedKey = newSharedKey;
+    group.lastUpdated = Date.now();
   }
 
   // Encrypt a key with a public key using ML-KEM

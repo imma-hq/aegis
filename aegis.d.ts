@@ -309,6 +309,7 @@ declare module "@immahq/aegis" {
     lastUsed: number;
     isInitiator: boolean;
     ratchetCount: number;
+    lastRatchetAt?: number;
     state: "CREATED" | "KEY_CONFIRMED" | "ACTIVE" | "RATCHET_PENDING" | "ERROR";
     confirmed: boolean;
     confirmationMac?: Uint8Array;

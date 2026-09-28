@@ -33,6 +33,7 @@ export const ERRORS = {
   // Simple replay protection errors
   DUPLICATE_MESSAGE: "Duplicate message detected",
   MESSAGE_TOO_OLD_TIMESTAMP: "Message timestamp is too old",
+  MESSAGE_FROM_FUTURE: "Message timestamp is too far in the future",
 } as const;
 
 // KEM constants
@@ -42,10 +43,16 @@ export const ML_KEM768_CIPHERTEXT_LENGTH = 1088;
 
 // Ratchet constants
 export const RATCHET_AFTER_MESSAGES = 50;
+export const RATCHET_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 export const MAX_SKIPPED_MESSAGES = 100;
 export const KEY_CONFIRMATION_TIMEOUT = 30000; // 30 seconds
 
-// Simple replay protection constants
+// Replay protection constants. Replay is detected from message IDs and
+// per-sender counters, not the wall clock. MAX_MESSAGE_AGE is only an advisory
+// freshness window (kept generous so offline recipients and queued delivery
+// still work), and MAX_CLOCK_SKEW absorbs drift on devices whose clocks run
+// ahead of the recipient's.
 export const REPLAY_WINDOW_SIZE = 100; // Accept messages up to 100 behind current
-export const MAX_MESSAGE_AGE = 5 * 60 * 1000; // 5 minutes maximum message age
+export const MAX_MESSAGE_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+export const MAX_CLOCK_SKEW = 24 * 60 * 60 * 1000; // 24 hours
 export const MAX_STORED_MESSAGE_IDS = 1000; // Store last 1000 message IDs

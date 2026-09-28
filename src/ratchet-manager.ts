@@ -1,7 +1,7 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { Session, PendingRatchetState, RatchetChain } from "./types";
 import { Logger } from "./logger";
-import { RATCHET_AFTER_MESSAGES } from "./constants";
+import { RATCHET_AFTER_MESSAGES, RATCHET_INTERVAL } from "./constants";
 import { KemRatchet } from "./ratchet";
 
 export class RatchetManager {
@@ -9,11 +9,25 @@ export class RatchetManager {
     const messageCount = session.sendingChain?.messageNumber || 0;
     const isFirstMessageAsInitiator = session.isInitiator && messageCount === 0;
 
-    return (
-      session.peerRatchetPublicKey !== null &&
-      !isFirstMessageAsInitiator &&
-      messageCount >= RATCHET_AFTER_MESSAGES
-    );
+    // Without the peer's ratchet public key we cannot run a KEM ratchet yet.
+    if (session.peerRatchetPublicKey === null || isFirstMessageAsInitiator) {
+      return false;
+    }
+
+    // Don't start a new ratchet while one is still awaiting acknowledgement.
+    if (session.pendingRatchetState) {
+      return false;
+    }
+
+    // Policy 1: bound the number of messages sent under a single chain.
+    if (messageCount >= RATCHET_AFTER_MESSAGES) {
+      return true;
+    }
+
+    // Policy 2: bound the age of the chain so low-traffic sessions still rotate
+    // keys without the app having to call triggerRatchet() manually.
+    const lastRatchetAt = session.lastRatchetAt ?? session.createdAt;
+    return Date.now() - lastRatchetAt >= RATCHET_INTERVAL;
   }
 
   needsReceivingRatchet(
@@ -58,6 +72,7 @@ export class RatchetManager {
     newSession.previousSendingChainLength =
       session.sendingChain?.messageNumber ?? 0;
     newSession.ratchetCount++;
+    newSession.lastRatchetAt = Date.now();
     newSession.state = "RATCHET_PENDING";
 
     Logger.log("Ratchet", "Prepared sending KEM ratchet", {
@@ -93,6 +108,7 @@ export class RatchetManager {
     updatedSession.sendingChain = result.sendingChain;
     updatedSession.receivingChain = result.receivingChain;
     updatedSession.ratchetCount++;
+    updatedSession.lastRatchetAt = Date.now();
     updatedSession.state = "ACTIVE";
 
     updatedSession.pendingRatchetState = {
@@ -155,6 +171,7 @@ export class RatchetManager {
       receivingChain: result.receivingChain,
       previousSendingChainLength: session.sendingChain?.messageNumber ?? 0,
       ratchetCount: session.ratchetCount + 1,
+      lastRatchetAt: Date.now(),
       state: "ACTIVE",
       pendingRatchetState: {
         newRootKey: result.newRootKey,

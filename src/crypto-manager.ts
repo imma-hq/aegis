@@ -12,7 +12,7 @@ import type {
   RatchetChain,
 } from "./types";
 import { Logger } from "./logger";
-import { ERRORS, MAX_MESSAGE_AGE } from "./constants";
+import { ERRORS, MAX_CLOCK_SKEW, MAX_MESSAGE_AGE } from "./constants";
 import { serializeHeader } from "./utils";
 import { KemRatchet } from "./ratchet";
 
@@ -217,11 +217,18 @@ export class CryptoManager {
       const now = Date.now();
       const messageAge = now - encrypted.header.timestamp;
       if (messageAge > MAX_MESSAGE_AGE) {
-        Logger.warn("Replay", "Message too old", {
+        Logger.warn("Replay", "Message older than freshness window", {
           age: `${Math.round(messageAge / 1000)}s`,
           maxAge: `${MAX_MESSAGE_AGE / 1000}s`,
         });
         throw new Error(ERRORS.MESSAGE_TOO_OLD_TIMESTAMP);
+      }
+      if (messageAge < -MAX_CLOCK_SKEW) {
+        Logger.warn("Replay", "Message timestamp is too far in the future", {
+          ahead: `${Math.round(-messageAge / 1000)}s`,
+          maxSkew: `${MAX_CLOCK_SKEW / 1000}s`,
+        });
+        throw new Error(ERRORS.MESSAGE_FROM_FUTURE);
       }
 
       session.lastProcessedTimestamp = now;
