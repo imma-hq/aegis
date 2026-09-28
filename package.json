@@ -25,6 +25,7 @@
     "demo": "tsx examples/demo.ts",
     "demo:group": "tsx examples/group-demo.ts",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
@@ -59,6 +60,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
+    "@vitest/coverage-v8": "^4.1.11",
     "rimraf": "^6.1.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
