@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { ml_dsa65 } from "@noble/post-quantum/ml-dsa.js";
+import { concatBytes } from "@noble/hashes/utils.js";
 import { Aegis, MemoryStorage } from "../src/index";
 import { ERRORS } from "../src/constants";
+import { serializeHeader } from "../src/utils";
 
 describe("Error Handling", () => {
   let alice: Aegis;
@@ -21,24 +24,35 @@ describe("Error Handling", () => {
   });
 
   it("should handle invalid public bundle validation", async () => {
-    const _aliceIdentity = await alice.createIdentity();
+    await alice.createIdentity();
 
-    // Create an invalid public bundle with wrong lengths
-    const invalidBundle = {
+    // A bundle without a pre-key fails up-front validation
+    const missingPreKey = {
       userId: "test-user",
-      kemPublicKey: new Uint8Array(10), // Invalid length
-      dsaPublicKey: new Uint8Array(10), // Invalid length
-      preKey: {
-        id: 1,
-        key: new Uint8Array(10), // Invalid length
-        signature: new Uint8Array(10), // Invalid length
-      },
+      kemPublicKey: new Uint8Array(1184),
+      dsaPublicKey: new Uint8Array(1952),
       createdAt: Date.now(),
+    } as any;
+
+    await expect(alice.createSession(missingPreKey)).rejects.toThrow(
+      ERRORS.INVALID_PEER_BUNDLE,
+    );
+
+    // A correctly-sized but zeroed pre-key signature fails verification
+    const bobIdentity = await bob.createIdentity();
+    const tamperedBundle = {
+      ...bobIdentity.publicBundle,
+      preKey: {
+        ...bobIdentity.publicBundle.preKey,
+        signature: new Uint8Array(
+          bobIdentity.publicBundle.preKey.signature.length,
+        ),
+      },
     };
 
-    // The validation happens inside the createSession method
-    // So we expect it to throw during the cryptographic operation
-    await expect(alice.createSession(invalidBundle)).rejects.toThrow();
+    await expect(alice.createSession(tamperedBundle)).rejects.toThrow(
+      ERRORS.INVALID_PREKEY_SIGNATURE,
+    );
   });
 
   it("should handle session not found error", async () => {
@@ -53,7 +67,7 @@ describe("Error Handling", () => {
     ).rejects.toThrow(ERRORS.SESSION_NOT_FOUND);
   });
 
-  it("should handle message too old error", async () => {
+  it("should reject a correctly signed but too-old message", async () => {
     const aliceIdentity = await alice.createIdentity();
     const bobIdentity = await bob.createIdentity();
 
@@ -76,28 +90,31 @@ describe("Error Handling", () => {
     );
     await bob.decryptMessage(bobSession.sessionId, normalMessage);
 
-    // Create a valid message and then modify its timestamp to be too old
+    // Create a valid message and then age its timestamp, re-signing the header
+    // so the signature stays valid and the age check is what rejects it
     const validMessage = await alice.encryptMessage(
       aliceSession.sessionId,
       "test message",
     );
-
-    // Modify the header to have an old timestamp
-    const oldMessage = {
+    const staleHeader = {
+      ...validMessage.header,
+      timestamp: Date.now() - 10 * 60 * 1000, // 10 minutes old
+    };
+    const staleMessage = {
       ...validMessage,
-      header: {
-        ...validMessage.header,
-        timestamp: Date.now() - 400000, // More than 5 minutes old
-      },
+      header: staleHeader,
+      signature: ml_dsa65.sign(
+        concatBytes(serializeHeader(staleHeader), validMessage.ciphertext),
+        aliceIdentity.identity.dsaKeyPair.secretKey,
+      ),
     };
 
-    // Expect it to throw some error (might not be the exact error we expect due to implementation)
     await expect(
-      bob.decryptMessage(bobSession.sessionId, oldMessage),
-    ).rejects.toThrow();
+      bob.decryptMessage(bobSession.sessionId, staleMessage),
+    ).rejects.toThrow(ERRORS.MESSAGE_TOO_OLD_TIMESTAMP);
   });
 
-  it("should handle ratchet ciphertext missing error", async () => {
+  it("should reject a ratchet message with no KEM ciphertext", async () => {
     const aliceIdentity = await alice.createIdentity();
     const bobIdentity = await bob.createIdentity();
 
@@ -120,30 +137,33 @@ describe("Error Handling", () => {
     );
     await bob.decryptMessage(bobSession.sessionId, normalMessage);
 
-    // Create a message that indicates it's a ratchet message but has no kemCiphertext
-    // We need to create a valid encrypted message and then modify it appropriately
     const validMessage = await alice.encryptMessage(
       aliceSession.sessionId,
       "ratchet test",
     );
 
-    // Modify the message to indicate ratchet but without proper ciphertext
+    // Flag the message as a ratchet message without a KEM ciphertext, then
+    // re-sign so signature verification passes and the ratchet check fires
+    const ratchetHeader = {
+      ...validMessage.header,
+      isRatchetMessage: true,
+      kemCiphertext: undefined,
+    };
     const invalidRatchetMessage = {
       ...validMessage,
-      header: {
-        ...validMessage.header,
-        isRatchetMessage: true, // Mark as ratchet message
-      },
-      kemCiphertext: undefined, // Remove the ciphertext
+      header: ratchetHeader,
+      signature: ml_dsa65.sign(
+        concatBytes(serializeHeader(ratchetHeader), validMessage.ciphertext),
+        aliceIdentity.identity.dsaKeyPair.secretKey,
+      ),
     };
 
-    // This should fail with some error (might not be the exact one we expect due to implementation)
     await expect(
       bob.decryptMessage(bobSession.sessionId, invalidRatchetMessage),
-    ).rejects.toThrow();
+    ).rejects.toThrow(ERRORS.RATCHET_CIPHERTEXT_MISSING);
   });
 
-  it("should handle invalid session state errors", async () => {
+  it("should encrypt/decrypt on a confirmed session and reject unknown sessions", async () => {
     const aliceIdentity = await alice.createIdentity();
     const bobIdentity = await bob.createIdentity();
 
@@ -159,12 +179,18 @@ describe("Error Handling", () => {
       bobSession.confirmationMac,
     );
 
-    // Test that encryption works after session is established
-    const result = await alice.encryptMessage(
+    // A confirmed session must round-trip a real message
+    const encrypted = await alice.encryptMessage(
       aliceSession.sessionId,
       "Test message",
     );
-    expect(result).toBeDefined();
+    const decrypted = await bob.decryptMessage(bobSession.sessionId, encrypted);
+    expect(new TextDecoder().decode(decrypted.plaintext)).toBe("Test message");
+
+    // And unknown sessions must be rejected
+    await expect(
+      alice.encryptMessage("non-existent-session", "Test message"),
+    ).rejects.toThrow(ERRORS.SESSION_NOT_FOUND);
   });
 
   it("should handle out-of-order messages within limits", async () => {
@@ -207,7 +233,7 @@ describe("Error Handling", () => {
     expect(new TextDecoder().decode(dec2.plaintext)).toBe("Message 2");
   });
 
-  it("should handle too many skipped messages error", async () => {
+  it("should reject a message that skips beyond the allowed window", async () => {
     const aliceIdentity = await alice.createIdentity();
     const bobIdentity = await bob.createIdentity();
 
@@ -230,29 +256,32 @@ describe("Error Handling", () => {
     );
     await bob.decryptMessage(bobSession.sessionId, firstMsg);
 
-    // Create a message with a number that's too far ahead
-    // We need to manually construct this since encryptMessage will use correct sequence
     const validEncrypted = await alice.encryptMessage(
       aliceSession.sessionId,
       "Test message",
     );
 
-    // Manually modify the header to simulate a message that's too far ahead
+    // Jump the message number far past maxSkippedMessages and re-sign so the
+    // signature is valid and the skip-window check is what rejects it
+    const farAheadHeader = {
+      ...validEncrypted.header,
+      messageNumber: validEncrypted.header.messageNumber + 200,
+    };
     const invalidMessage = {
       ...validEncrypted,
-      header: {
-        ...validEncrypted.header,
-        messageNumber: validEncrypted.header.messageNumber + 200, // Much higher than maxSkippedMessages
-      },
+      header: farAheadHeader,
+      signature: ml_dsa65.sign(
+        concatBytes(serializeHeader(farAheadHeader), validEncrypted.ciphertext),
+        aliceIdentity.identity.dsaKeyPair.secretKey,
+      ),
     };
 
-    // This should fail with some error (might not be the exact one we expect due to implementation)
     await expect(
       bob.decryptMessage(bobSession.sessionId, invalidMessage),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/Cannot skip \d+ messages, max is 100/);
   });
 
-  it("should handle cleanup of old sessions", async () => {
+  it("should remove sessions older than the supplied max age", async () => {
     const aliceIdentity = await alice.createIdentity();
     const bobIdentity = await bob.createIdentity();
 
@@ -268,24 +297,16 @@ describe("Error Handling", () => {
       bobSession.confirmationMac,
     );
 
-    // Get session counts before cleanup
-    const aliceSessionsBefore = await alice.getSessions();
-    const bobSessionsBefore = await bob.getSessions();
+    expect(await alice.getSessions()).toHaveLength(1);
 
-    expect(aliceSessionsBefore.length).toBe(1);
-    expect(bobSessionsBefore.length).toBe(1);
+    // A max age far in the future keeps recently-used sessions
+    await alice.cleanupOldSessions(60 * 60 * 1000);
+    expect(await alice.getSessions()).toHaveLength(1);
 
-    // Try to cleanup with a very small max age (1ms) to ensure all sessions are old
+    // A tiny max age removes sessions that have not been used recently
+    await new Promise((resolve) => setTimeout(resolve, 5));
     await alice.cleanupOldSessions(1);
-    await bob.cleanupOldSessions(1);
-
-    const aliceSessions = await alice.getSessions();
-    const bobSessions = await bob.getSessions();
-
-    // Sessions might not be removed immediately due to implementation
-    // Just verify that the cleanup method runs without error
-    expect(aliceSessions).toBeDefined();
-    expect(bobSessions).toBeDefined();
+    expect(await alice.getSessions()).toHaveLength(0);
   });
 
   it("should handle manual ratchet trigger on non-existent session", async () => {

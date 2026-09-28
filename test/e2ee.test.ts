@@ -242,7 +242,7 @@ describe("E2EE", () => {
       ).rejects.toThrow(ERRORS.INVALID_MESSAGE_SIGNATURE);
     });
 
-    it("should allow encrypting if session is in proper state", async () => {
+    it("should round-trip a message once the session is confirmed", async () => {
       // Create a new session and confirm it properly
       const aliceIdentity = await alice.createIdentity();
       const bobIdentity = await bob.createIdentity();
@@ -259,12 +259,18 @@ describe("E2EE", () => {
         bobSession.confirmationMac,
       );
 
-      // Now encrypting should work
-      const result = await alice.encryptMessage(
+      // Now encrypting should work, and the ciphertext must decrypt back
+      const encrypted = await alice.encryptMessage(
         aliceSession.sessionId,
         "Test message",
       );
-      expect(result).toBeDefined();
+      const decrypted = await bob.decryptMessage(
+        bobSession.sessionId,
+        encrypted,
+      );
+      expect(new TextDecoder().decode(decrypted.plaintext)).toBe(
+        "Test message",
+      );
     });
   });
 

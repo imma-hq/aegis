@@ -1,6 +1,50 @@
-import { describe, it, expect, beforeEach, } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { Aegis, MemoryStorage } from "../src/index";
-import type { Group } from "../src/types";
+import type { Group, Session } from "../src/types";
+
+// Builds the session record a member needs in order to read/write group
+// messages. `rootKey` is whatever that member already holds locally, so it can
+// deliberately differ from the real shared key to exercise key unwrapping.
+function makeGroupSessionRecord(
+  group: Group,
+  ownerDsaPublicKey: Uint8Array,
+  rootKey: Uint8Array,
+): Session {
+  return {
+    sessionId: group.groupId,
+    peerUserId: "GROUP",
+    peerDsaPublicKey: ownerDsaPublicKey,
+    rootKey,
+    currentRatchetKeyPair: null,
+    peerRatchetPublicKey: null,
+    sendingChain: null,
+    receivingChain: null,
+    previousSendingChainLength: 0,
+    skippedMessageKeys: new Map(),
+    highestReceivedMessageNumber: -1,
+    maxSkippedMessages: 100,
+    createdAt: group.createdAt,
+    lastUsed: Date.now(),
+    isInitiator: true,
+    ratchetCount: 0,
+    state: "ACTIVE",
+    confirmed: true,
+    groupData: {
+      name: group.name,
+      members: group.members,
+      owner: group.owner,
+      memberKeys: Array.from(group.memberKeys.entries()),
+      memberPublicKeys: Array.from(group.memberPublicKeys.entries()),
+      memberDsaPublicKeys: Array.from(group.memberDsaPublicKeys.entries()),
+      receivedMessageNumbers: Array.from(
+        group.receivedMessageNumbers.entries(),
+      ),
+    },
+    receivedMessageIds: new Set<string>(),
+    replayWindowSize: 100,
+    lastProcessedTimestamp: Date.now(),
+  };
+}
 
 describe("Group", () => {
   let alice: Aegis;
@@ -767,16 +811,142 @@ describe("Group", () => {
     });
 
     it("should not allow non-members to decrypt messages", async () => {
-      // Create a non-member
       const outsider = new Aegis(new MemoryStorage());
-      const _outsiderIdentity = await outsider.createIdentity();
+      await outsider.createIdentity();
 
       const message = "Secret group message";
-      const _encrypted = await alice.encryptGroupMessage(group.groupId, message);
+      const encrypted = await alice.encryptGroupMessage(group.groupId, message);
 
-      // The outsider should not be able to decrypt the message
-      // Since they're not in the group, they won't have the proper keys
-      await expect(outsider.getGroup(group.groupId)).resolves.toBeNull();
+      // Without any group state the outsider cannot even find the group
+      await expect(
+        outsider.decryptGroupMessage(group.groupId, encrypted),
+      ).rejects.toThrow("Group not found");
+
+      // Even when handed the full group record, membership is still enforced
+      await outsider
+        .getStorage()
+        .saveSession(
+          group.groupId,
+          makeGroupSessionRecord(
+            group,
+            aliceIdentity.dsaKeyPair.publicKey,
+            group.sharedKey,
+          ),
+        );
+
+      await expect(
+        outsider.decryptGroupMessage(group.groupId, encrypted),
+      ).rejects.toThrow("User is not a member of this group");
+    });
+  });
+
+  describe("Group Key Distribution", () => {
+    it("should let non-owner members read and send via the wrapped group key", async () => {
+      const aliceIdentity = (await alice.createIdentity()).identity;
+      const bobIdentity = (await bob.createIdentity()).identity;
+      const charlieIdentity = (await charlie.createIdentity()).identity;
+
+      const memberKemPublicKeys = new Map<string, Uint8Array>([
+        [aliceIdentity.userId, aliceIdentity.kemKeyPair.publicKey],
+        [bobIdentity.userId, bobIdentity.kemKeyPair.publicKey],
+        [charlieIdentity.userId, charlieIdentity.kemKeyPair.publicKey],
+      ]);
+      const memberDsaPublicKeys = new Map<string, Uint8Array>([
+        [aliceIdentity.userId, aliceIdentity.dsaKeyPair.publicKey],
+        [bobIdentity.userId, bobIdentity.dsaKeyPair.publicKey],
+        [charlieIdentity.userId, charlieIdentity.dsaKeyPair.publicKey],
+      ]);
+
+      const group = await alice.createGroup(
+        "Distributed Key Group",
+        [aliceIdentity.userId, bobIdentity.userId, charlieIdentity.userId],
+        memberKemPublicKeys,
+        memberDsaPublicKeys,
+      );
+
+      // Members only receive their wrapped key + public keys, never the
+      // plaintext shared key, so seed their storage with a placeholder rootKey.
+      const placeholderKey = new Uint8Array(32).fill(7);
+      expect(placeholderKey).not.toEqual(group.sharedKey);
+
+      await bob
+        .getStorage()
+        .saveSession(
+          group.groupId,
+          makeGroupSessionRecord(
+            group,
+            aliceIdentity.dsaKeyPair.publicKey,
+            placeholderKey,
+          ),
+        );
+      await charlie
+        .getStorage()
+        .saveSession(
+          group.groupId,
+          makeGroupSessionRecord(
+            group,
+            aliceIdentity.dsaKeyPair.publicKey,
+            placeholderKey,
+          ),
+        );
+
+      // Owner -> members
+      const fromAlice = await alice.encryptGroupMessage(
+        group.groupId,
+        "hello from owner",
+      );
+      expect(
+        new TextDecoder().decode(
+          await bob.decryptGroupMessage(group.groupId, fromAlice),
+        ),
+      ).toBe("hello from owner");
+      expect(
+        new TextDecoder().decode(
+          await charlie.decryptGroupMessage(group.groupId, fromAlice),
+        ),
+      ).toBe("hello from owner");
+
+      // Member -> owner: only succeeds if the KEM-unwrapped key equals the
+      // owner's shared key.
+      const fromBob = await bob.encryptGroupMessage(
+        group.groupId,
+        "hello from member",
+      );
+      expect(
+        new TextDecoder().decode(
+          await alice.decryptGroupMessage(group.groupId, fromBob),
+        ),
+      ).toBe("hello from member");
+    });
+
+    it("should wrap a unique ciphertext of the shared key per member", async () => {
+      const aliceIdentity = (await alice.createIdentity()).identity;
+      const bobIdentity = (await bob.createIdentity()).identity;
+
+      const memberKemPublicKeys = new Map<string, Uint8Array>([
+        [aliceIdentity.userId, aliceIdentity.kemKeyPair.publicKey],
+        [bobIdentity.userId, bobIdentity.kemKeyPair.publicKey],
+      ]);
+      const memberDsaPublicKeys = new Map<string, Uint8Array>([
+        [aliceIdentity.userId, aliceIdentity.dsaKeyPair.publicKey],
+        [bobIdentity.userId, bobIdentity.dsaKeyPair.publicKey],
+      ]);
+
+      const group = await alice.createGroup(
+        "Unique Wrap Group",
+        [aliceIdentity.userId, bobIdentity.userId],
+        memberKemPublicKeys,
+        memberDsaPublicKeys,
+      );
+
+      const aliceWrapped = group.memberKeys.get(aliceIdentity.userId);
+      const bobWrapped = group.memberKeys.get(bobIdentity.userId);
+
+      expect(aliceWrapped).toBeDefined();
+      expect(bobWrapped).toBeDefined();
+      expect(aliceWrapped).not.toEqual(group.sharedKey);
+      expect(bobWrapped).not.toEqual(group.sharedKey);
+      expect(aliceWrapped).not.toEqual(bobWrapped);
     });
   });
 });
