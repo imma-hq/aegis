@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { Aegis, StorageAdapter } from "../src/index";
+import { describe, it, expect, } from "vitest";
+import { Aegis, type StorageAdapter } from "../src/index";
 
 // Simulate a more realistic storage implementation for benchmarking
 class SimulatedStorage implements StorageAdapter {
@@ -171,7 +171,7 @@ describe("Mobile/Desktop Chat App Benchmark Tests", () => {
     for (let i = 0; i < iterations; i++) {
       // Cycle through different message types to simulate real usage
       const messageIndex = i % 3;
-      let message;
+      let message: string;
       switch (messageIndex) {
         case 0:
           message = shortMessage;
@@ -252,7 +252,7 @@ describe("Mobile/Desktop Chat App Benchmark Tests", () => {
     for (let i = 0; i < iterations; i++) {
       // Cycle through different media sizes to simulate real usage
       const mediaIndex = i % 3;
-      let media;
+      let media: Uint8Array;
       switch (mediaIndex) {
         case 0:
           media = smallMedia;
@@ -384,7 +384,7 @@ describe("Mobile/Desktop Chat App Benchmark Tests", () => {
 
     // Create multiple identities for the group
     for (let i = 0; i < groupMembers; i++) {
-      const identityResult = await aegis.createIdentity();
+      const _identityResult = await aegis.createIdentity();
       const identity = await aegis.getIdentity();
       members.push(identity);
     }

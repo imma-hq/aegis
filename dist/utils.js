@@ -12,7 +12,7 @@ export function generateSessionId(localKemPublicKey, peerKemPublicKey, preKey) {
     }));
 }
 export function validatePublicBundle(bundle) {
-    if (!bundle || !bundle.preKey || !bundle.preKey.key) {
+    if (!bundle?.preKey?.key) {
         throw new Error("Invalid peer bundle");
     }
     if (!bundle.userId || typeof bundle.userId !== "string") {

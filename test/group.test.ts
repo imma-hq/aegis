@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, } from "vitest";
 import { Aegis, MemoryStorage } from "../src/index";
 import type { Group } from "../src/types";
 
@@ -76,7 +76,7 @@ describe("Group", () => {
       const aliceIdentityResult = await alice.createIdentity();
       const aliceIdentity = aliceIdentityResult.identity;
       const bobIdentityResult = await bob.createIdentity();
-      const bobIdentity = bobIdentityResult.identity;
+      const _bobIdentity = bobIdentityResult.identity;
 
       const memberKemPublicKeys = new Map<string, Uint8Array>();
       memberKemPublicKeys.set(
@@ -769,10 +769,10 @@ describe("Group", () => {
     it("should not allow non-members to decrypt messages", async () => {
       // Create a non-member
       const outsider = new Aegis(new MemoryStorage());
-      const outsiderIdentity = await outsider.createIdentity();
+      const _outsiderIdentity = await outsider.createIdentity();
 
       const message = "Secret group message";
-      const encrypted = await alice.encryptGroupMessage(group.groupId, message);
+      const _encrypted = await alice.encryptGroupMessage(group.groupId, message);
 
       // The outsider should not be able to decrypt the message
       // Since they're not in the group, they won't have the proper keys

@@ -198,7 +198,7 @@ export class E2EE {
 
   async getConfirmationMac(sessionId: string): Promise<Uint8Array | null> {
     const session = await this.storage.getSession(sessionId);
-    if (!session || !session.confirmationMac) {
+    if (!session?.confirmationMac) {
       return null;
     }
     return session.confirmationMac;

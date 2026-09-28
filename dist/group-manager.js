@@ -117,7 +117,7 @@ export class GroupManager {
             lastProcessedTimestamp: Date.now(),
         });
         Logger.log("GroupManager", "Group created successfully", {
-            groupId: groupId.substring(0, 16) + "...",
+            groupId: `${groupId.substring(0, 16)}...`,
             name,
             membersCount: members.length,
         });
@@ -183,7 +183,7 @@ export class GroupManager {
             lastProcessedTimestamp: Date.now(),
         });
         Logger.log("GroupManager", "Member added to group", {
-            groupId: groupId.substring(0, 16) + "...",
+            groupId: `${groupId.substring(0, 16)}...`,
             userId,
             membersCount: group.members.length,
         });
@@ -247,7 +247,7 @@ export class GroupManager {
             lastProcessedTimestamp: Date.now(),
         });
         Logger.log("GroupManager", "Member removed from group", {
-            groupId: groupId.substring(0, 16) + "...",
+            groupId: `${groupId.substring(0, 16)}...`,
             userId,
             membersCount: group.members.length,
         });
@@ -315,7 +315,7 @@ export class GroupManager {
             lastProcessedTimestamp: Date.now(),
         });
         Logger.log("GroupManager", "Group key updated", {
-            groupId: groupId.substring(0, 16) + "...",
+            groupId: `${groupId.substring(0, 16)}...`,
         });
     }
     async encryptMessage(groupId, message) {
@@ -380,8 +380,8 @@ export class GroupManager {
         const messageToSign = concatBytes(headerBytes, fullCiphertext);
         const signature = ml_dsa65.sign(messageToSign, this.identity.dsaKeyPair.secretKey);
         Logger.log("GroupManager", "Group message encrypted", {
-            groupId: groupId.substring(0, 16) + "...",
-            messageId: header.messageId.substring(0, 16) + "...",
+            groupId: `${groupId.substring(0, 16)}...`,
+            messageId: `${header.messageId.substring(0, 16)}...`,
             senderId: this.identity.userId,
         });
         return {
@@ -480,8 +480,8 @@ export class GroupManager {
         const cipher = xchacha20poly1305(sharedKey, nonce);
         const plaintext = cipher.decrypt(encryptedData);
         Logger.log("GroupManager", "Group message decrypted", {
-            groupId: groupId.substring(0, 16) + "...",
-            messageId: encrypted.header.messageId.substring(0, 16) + "...",
+            groupId: `${groupId.substring(0, 16)}...`,
+            messageId: `${encrypted.header.messageId.substring(0, 16)}...`,
             senderId: encrypted.header.senderId,
             messageNumber: encrypted.header.messageNumber,
         });
@@ -489,7 +489,7 @@ export class GroupManager {
     }
     async getGroup(groupId) {
         const session = await this.storage.getSession(groupId);
-        if (!session || session.peerUserId !== "GROUP") {
+        if (session?.peerUserId !== "GROUP") {
             return null;
         }
         // Reconstruct the group from the stored session data

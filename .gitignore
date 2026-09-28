@@ -29,6 +29,8 @@ coverage
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+pnpm-debug.*
+.pnpm-debug.*
 
 # macOS
 .DS_Store

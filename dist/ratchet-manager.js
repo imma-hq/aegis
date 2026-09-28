@@ -116,7 +116,7 @@ export class RatchetManager {
             },
         };
         Logger.log("Ratchet", "Manually triggered ratchet", {
-            sessionId: sessionId.substring(0, 16) + "...",
+            sessionId: `${sessionId.substring(0, 16)}...`,
             newRatchetCount: newSession.ratchetCount,
         });
         return newSession;

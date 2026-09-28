@@ -22,7 +22,7 @@ export class SessionKeyExchange {
     key2: Uint8Array,
     ciphertext: Uint8Array
   ): string {
-    const [sortedKey1, sortedKey2] = this.getSortedKeys(key1, key2);
+    const [sortedKey1, sortedKey2] = SessionKeyExchange.getSortedKeys(key1, key2);
 
     return bytesToHex(
       blake3(concatBytes(sortedKey1, sortedKey2, ciphertext), { dkLen: 32 })
@@ -86,14 +86,14 @@ export class SessionKeyExchange {
     }
 
     // Create session ID (both parties will compute same)
-    const sessionId = this.createSessionId(
+    const sessionId = SessionKeyExchange.createSessionId(
       localIdentity.kemKeyPair.publicKey,
       peerBundle.kemPublicKey,
       ciphertext
     );
 
     // Derive keys - BOTH PARTIES MUST USE EXACT SAME INPUTS
-    const [sortedKey1, sortedKey2] = this.getSortedKeys(
+    const [sortedKey1, sortedKey2] = SessionKeyExchange.getSortedKeys(
       localIdentity.kemKeyPair.publicKey,
       peerBundle.kemPublicKey
     );
@@ -181,14 +181,14 @@ export class SessionKeyExchange {
       );
     }
 
-    const sessionId = this.createSessionId(
+    const sessionId = SessionKeyExchange.createSessionId(
       localIdentity.kemKeyPair.publicKey,
       peerBundle.kemPublicKey,
       ciphertext
     );
 
     // Derive keys - MUST USE EXACT SAME INPUTS AS INITIATOR
-    const [sortedKey1, sortedKey2] = this.getSortedKeys(
+    const [sortedKey1, sortedKey2] = SessionKeyExchange.getSortedKeys(
       localIdentity.kemKeyPair.publicKey,
       peerBundle.kemPublicKey
     );

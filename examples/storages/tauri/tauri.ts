@@ -11,7 +11,7 @@ function deepCloneSession(session: Session): Session {
 
 // Serialize/deserialize
 function serialize(value: any): string {
-  return JSON.stringify(value, (k, v) => {
+  return JSON.stringify(value, (_k, v) => {
     if (v instanceof Uint8Array)
       return { _type: "Uint8Array", data: Array.from(v) };
     if (v instanceof Map)
@@ -22,7 +22,7 @@ function serialize(value: any): string {
 }
 
 function deserialize(text: string): any {
-  return JSON.parse(text, (k, v) => {
+  return JSON.parse(text, (_k, v) => {
     if (v && typeof v === "object") {
       if (v._type === "Uint8Array") return new Uint8Array(v.data);
       if (v._type === "Map") return new Map(v.data);

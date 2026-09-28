@@ -3,6 +3,7 @@
   "version": "0.1.4",
   "description": "Lightweight, storage-agnostic library for client-side End-to-End (E2E) encryption",
   "type": "module",
+  "packageManager": "pnpm@11.8.0",
   "main": "./dist/index.js",
   "types": "./aegis.d.ts",
   "exports": {
@@ -19,11 +20,15 @@
     "access": "public"
   },
   "scripts": {
-    "build": "npm run clean && tsc --build",
+    "build": "pnpm run clean && tsc --build",
     "clean": "rimraf ./dist",
     "demo": "tsx examples/demo.ts",
     "demo:group": "tsx examples/group-demo.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "format": "biome format --write ."
   },
   "repository": {
     "type": "git",
@@ -53,6 +58,7 @@
     "buffer": "^6.0.3"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
     "rimraf": "^6.1.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

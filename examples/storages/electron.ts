@@ -3,8 +3,8 @@ import type { StorageAdapter, Identity, Session } from "./types";
 import Database from "better-sqlite3";
 import * as keytar from "keytar";
 import { app } from "electron";
-import * as path from "path";
-import { randomBytes } from "crypto";
+import * as path from "node:path";
+import { randomBytes } from "node:crypto";
 
 // --- Secure Key Management ---
 const SERVICE = "com.yourapp.aegis";
@@ -49,7 +49,7 @@ async function getDb(): Promise<Database> {
 
 // --- Serialization ---
 function serialize(value: any): string {
-  return JSON.stringify(value, (k, v) => {
+  return JSON.stringify(value, (_k, v) => {
     if (v instanceof Uint8Array)
       return { _type: "Uint8Array", data: Array.from(v) };
     if (v instanceof Map)
@@ -60,7 +60,7 @@ function serialize(value: any): string {
 }
 
 function deserialize(text: string): any {
-  return JSON.parse(text, (k, v) => {
+  return JSON.parse(text, (_k, v) => {
     if (v && typeof v === "object") {
       if (v._type === "Uint8Array") return new Uint8Array(v.data);
       if (v._type === "Map") return new Map(v.data);

@@ -19,16 +19,14 @@
 
 ---
 
-
-
 ## **Installation**
 
-Install the library using npm, yarn, or pnpm.
+Install the library using npm, pnpm, or yarn.
 
 ```bash
-npm install @immahq/aegis
+pnpm add @immahq/aegis
 # or
-yarn add @immahq/aegis
+npm install @immahq/aegis
 ```
 
 For React Native, you may need a
@@ -39,7 +37,6 @@ For React Native, you may need a
 ## **Setup**
 
 **Quick start**: Check [examples](/examples) for samples with browser, React Native, Electron, and Tauri
-
 
 ### **1. Implement a Storage Adapter**
 
@@ -80,7 +77,7 @@ const myStorage: StorageAdapter = {
 
 // Initialize the library before any other operation
 import { Aegis, MemoryStorage } from "@immahq/aegis";
-import type {StorageAdapter} from "@immahq/aegis";
+import type { StorageAdapter } from "@immahq/aegis";
 
 //Plug in your preferred storage or use MemoryStorage
 //const memory = new MemoryStorage();
@@ -109,9 +106,8 @@ console.log("Your Public Bundle:", publicBundle);
 const bobBundle = await getPublicKeyBundle();
 
 // 2. Create a session. This performs the ML-KEM key encapsulation.
-const { sessionId, ciphertext, confirmationMac } = await aegis.createSession(
-  bobBundle
-);
+const { sessionId, ciphertext, confirmationMac } =
+  await aegis.createSession(bobBundle);
 
 // 3. Send `ciphertext` and `confirmationMac` to Bob via your server
 ```
@@ -124,7 +120,7 @@ const { sessionId, confirmationMac, isValid } =
   await aegis.createResponderSession(
     aliceBundle,
     receivedCiphertext,
-    receivedConfirmationMac
+    receivedConfirmationMac,
   );
 
 if (isValid) {
@@ -139,7 +135,7 @@ if (isValid) {
 ```typescript
 const encryptedMessage = await aegis.encryptMessage(
   sessionId,
-  "Hello, Bob! This is a secret."
+  "Hello, Bob! This is a secret.",
 );
 ```
 
@@ -159,7 +155,10 @@ Aegis now supports creating identities with specific userIds and rotating identi
 ```typescript
 // Rotate identity but keep the same userId
 const rotatedResult = await aegis.rotateIdentity("user-123");
-console.log("Identity rotated with same userId:", rotatedResult.identity.userId);
+console.log(
+  "Identity rotated with same userId:",
+  rotatedResult.identity.userId,
+);
 ```
 
 #### **Rotate Identity with New UserId**
@@ -167,7 +166,10 @@ console.log("Identity rotated with same userId:", rotatedResult.identity.userId)
 ```typescript
 // Rotate identity and assign a new userId
 const newRotatedResult = await aegis.rotateIdentity("new-user-456");
-console.log("Identity rotated with new userId:", newRotatedResult.identity.userId);
+console.log(
+  "Identity rotated with new userId:",
+  newRotatedResult.identity.userId,
+);
 ```
 
 ### **6. Group Messaging with Enhanced Security**
@@ -196,7 +198,7 @@ const group = await aegis.createGroup(
   "family_chat_2025",
   [aliceUserId, bobUserId, charlieUserId],
   memberKemPublicKeys,
-  memberDsaPublicKeys
+  memberDsaPublicKeys,
 );
 ```
 
@@ -206,13 +208,13 @@ const group = await aegis.createGroup(
 // Alice encrypts a message for the entire group
 const groupCiphertext = await aegis.encryptGroupMessage(
   "family_chat_2025",
-  "Dinner at 8 PM!"
+  "Dinner at 8 PM!",
 );
 
 // Bob decrypts the group message
 const groupPlaintext = await aegis.decryptGroupMessage(
   "family_chat_2025",
-  groupCiphertext
+  groupCiphertext,
 );
 console.log(new TextDecoder().decode(groupPlaintext)); // "Dinner at 8 PM!"
 ```
@@ -251,9 +253,9 @@ console.log(new TextDecoder().decode(groupPlaintext)); // "Dinner at 8 PM!"
 
 ## **Testing and Examples**
 
-- **Run All Tests**: `npm test`
-- **Run peer messaging demo**: `npm run demo`
-- **Run group messaging demo**: `npm run demo:group`
+- **Run All Tests**: `pnpm test`
+- **Run peer messaging demo**: `pnpm demo`
+- **Run group messaging demo**: `pnpm demo:group`
 
 ---
 

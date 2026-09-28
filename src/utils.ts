@@ -22,7 +22,7 @@ export function generateSessionId(
 }
 
 export function validatePublicBundle(bundle: any): void {
-  if (!bundle || !bundle.preKey || !bundle.preKey.key) {
+  if (!bundle?.preKey?.key) {
     throw new Error("Invalid peer bundle");
   }
 

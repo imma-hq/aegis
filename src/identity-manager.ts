@@ -74,7 +74,7 @@ export class IdentityManager {
       await this.storage.saveIdentity(identity);
 
       Logger.log("Identity", "Identity created successfully", {
-        userId: finalUserId.substring(0, 16) + "...",
+        userId: `${finalUserId.substring(0, 16)}...`,
       });
 
       return { identity, publicBundle };

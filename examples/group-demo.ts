@@ -86,7 +86,7 @@ async function groupTest() {
   // In a real implementation, this would be handled by a group management protocol
   // For this demo, we'll manually update the DSA public keys
   const groupFromStorage = await aliceStorage.getSession(group.groupId);
-  if (groupFromStorage && groupFromStorage.groupData) {
+  if (groupFromStorage?.groupData) {
     // Update the member DSA public keys with the actual public keys of each member
     const updatedGroupData = {
       ...groupFromStorage.groupData,
@@ -236,7 +236,7 @@ async function groupTest() {
     `   Original identity userId: ${originalIdentity.userId.substring(0, 16)}...`,
   );
 
-  const rotatedResult = await alice.rotateIdentity("alice-user-123-rotated");
+  const _rotatedResult = await alice.rotateIdentity("alice-user-123-rotated");
   const newIdentity = await alice.getIdentity();
   console.log(
     `   New identity userId: ${newIdentity.userId.substring(0, 16)}...`,
@@ -287,7 +287,7 @@ async function groupTest() {
 
     // Update the DSA public keys in the group data for signature verification
     const newGroupFromStorage = await aliceStorage.getSession(newGroup.groupId);
-    if (newGroupFromStorage && newGroupFromStorage.groupData) {
+    if (newGroupFromStorage?.groupData) {
       const updatedGroupData = {
         ...newGroupFromStorage.groupData,
         memberDsaPublicKeys: [
@@ -347,7 +347,7 @@ async function groupTest() {
 // Run test
 groupTest()
   .then((success) => {
-    console.log("\n" + "=".repeat(50));
+    console.log(`\n${"=".repeat(50)}`);
     if (success) {
       console.log("🎉 All group tests passed! Group encryption is working.");
     } else {

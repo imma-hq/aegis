@@ -109,7 +109,7 @@ async function quickTest() {
   );
 
   // Test rotating with a new userId to ensure the identity changes
-  const rotatedResult = await alice.rotateIdentity("alice-user-123-rotated");
+  const _rotatedResult = await alice.rotateIdentity("alice-user-123-rotated");
   const newIdentity = await alice.getIdentity();
   console.log(
     `   New identity userId: ${newIdentity.userId.substring(0, 16)}...`,
@@ -161,7 +161,7 @@ async function quickTest() {
 // Run test
 quickTest()
   .then((success) => {
-    console.log("\n" + "=".repeat(50));
+    console.log(`\n${"=".repeat(50)}`);
     if (success) {
       console.log("🎉 All tests passed! Replay protection is working.");
     } else {

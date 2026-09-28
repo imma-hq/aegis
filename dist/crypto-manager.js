@@ -68,7 +68,7 @@ export class CryptoManager {
                 messageNumber: chainToUse.messageNumber,
                 previousChainLength: updatedSession.previousSendingChainLength,
                 kemCiphertext: kemCiphertext,
-                isRatchetMessage: kemCiphertext ? true : false,
+                isRatchetMessage: !!kemCiphertext,
                 timestamp: Date.now(),
             };
             let confirmationMac;
@@ -133,7 +133,7 @@ export class CryptoManager {
             }
             if (session.receivedMessageIds.has(encrypted.header.messageId)) {
                 Logger.warn("Replay", "Duplicate message detected", {
-                    messageId: encrypted.header.messageId.substring(0, 16) + "...",
+                    messageId: `${encrypted.header.messageId.substring(0, 16)}...`,
                 });
                 throw new Error(ERRORS.DUPLICATE_MESSAGE);
             }

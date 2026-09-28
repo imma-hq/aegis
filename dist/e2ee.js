@@ -148,7 +148,7 @@ export class E2EE {
     }
     async getConfirmationMac(sessionId) {
         const session = await this.storage.getSession(sessionId);
-        if (!session || !session.confirmationMac) {
+        if (!session?.confirmationMac) {
             return null;
         }
         return session.confirmationMac;

@@ -23,16 +23,19 @@ function withStore<T>(
   mode: IDBTransactionMode,
   callback: (store: IDBObjectStore) => Promise<T>,
 ): Promise<T> {
-  return new Promise(async (resolve, reject) => {
-    const db = await openDb();
-    const tx = db.transaction(STORE_NAME, mode);
-    tx.onerror = () => reject(tx.error);
-    tx.oncomplete = () => resolve(undefined as any);
+  return openDb().then(
+    (db) =>
+      new Promise<T>((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, mode);
+        tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => resolve(undefined as any);
 
-    const result = await callback(tx.objectStore(STORE_NAME));
-    // If callback returns a value, resolve with it
-    if (result !== undefined) resolve(result);
-  });
+        callback(tx.objectStore(STORE_NAME)).then((result) => {
+          // If callback returns a value, resolve with it
+          if (result !== undefined) resolve(result);
+        }, reject);
+      }),
+  );
 }
 
 // Deep clone helper (same as MemoryStorage)

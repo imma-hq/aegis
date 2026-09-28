@@ -9,7 +9,7 @@ export class KemRatchet {
             throw new Error("peerRatchetPublicKey is required for KEM ratchet encapsulation");
         }
         // Validate peer's ratchet public key
-        if (!this.validateRatchetPublicKey(peerRatchetPublicKey)) {
+        if (!KemRatchet.validateRatchetPublicKey(peerRatchetPublicKey)) {
             throw new Error("Invalid peer ratchet public key");
         }
         // Generate new ratchet keypair for NEXT round
@@ -17,10 +17,10 @@ export class KemRatchet {
         // Perform KEM encapsulation to peer's CURRENT ratchet public key
         const { sharedSecret, cipherText } = ml_kem768.encapsulate(peerRatchetPublicKey);
         // Derive new root key
-        const newRootKey = this.deriveKey(rootKey, sharedSecret, this.CONTEXT_ROOT_KEY);
+        const newRootKey = KemRatchet.deriveKey(rootKey, sharedSecret, KemRatchet.CONTEXT_ROOT_KEY);
         // Derive sending and receiving chain keys
-        const sendingChainKey = this.deriveKey(newRootKey, cipherText, this.CONTEXT_CHAIN_KEY);
-        const receivingChainKey = this.deriveKey(newRootKey, sharedSecret, this.CONTEXT_CHAIN_KEY);
+        const sendingChainKey = KemRatchet.deriveKey(newRootKey, cipherText, KemRatchet.CONTEXT_CHAIN_KEY);
+        const receivingChainKey = KemRatchet.deriveKey(newRootKey, sharedSecret, KemRatchet.CONTEXT_CHAIN_KEY);
         return {
             newRootKey,
             newRatchetKeyPair,
@@ -45,10 +45,10 @@ export class KemRatchet {
         // Generate new ratchet keypair for next round
         const newRatchetKeyPair = ml_kem768.keygen();
         // Derive new root key (must match encapsulator's derivation)
-        const newRootKey = this.deriveKey(rootKey, sharedSecret, this.CONTEXT_ROOT_KEY);
+        const newRootKey = KemRatchet.deriveKey(rootKey, sharedSecret, KemRatchet.CONTEXT_ROOT_KEY);
         // Derive chain keys (roles are swapped compared to encapsulator)
-        const sendingChainKey = this.deriveKey(newRootKey, sharedSecret, this.CONTEXT_CHAIN_KEY);
-        const receivingChainKey = this.deriveKey(newRootKey, kemCiphertext, this.CONTEXT_CHAIN_KEY);
+        const sendingChainKey = KemRatchet.deriveKey(newRootKey, sharedSecret, KemRatchet.CONTEXT_CHAIN_KEY);
+        const receivingChainKey = KemRatchet.deriveKey(newRootKey, kemCiphertext, KemRatchet.CONTEXT_CHAIN_KEY);
         return {
             newRootKey,
             newRatchetKeyPair,
@@ -67,13 +67,13 @@ export class KemRatchet {
     static generateConfirmationMac(sessionId, rootKey, chainKey, isResponse = false) {
         const context = isResponse
             ? new Uint8Array([0x06]) // Different context for response
-            : this.CONTEXT_CONFIRMATION;
+            : KemRatchet.CONTEXT_CONFIRMATION;
         const data = concatBytes(new TextEncoder().encode(sessionId), rootKey, chainKey, new Uint8Array([isResponse ? 1 : 0]));
-        return this.deriveKey(rootKey, data, context);
+        return KemRatchet.deriveKey(rootKey, data, context);
     }
     // Verify confirmation MAC
     static verifyConfirmationMac(sessionId, rootKey, chainKey, receivedMac, isResponse = false) {
-        const expectedMac = this.generateConfirmationMac(sessionId, rootKey, chainKey, isResponse);
+        const expectedMac = KemRatchet.generateConfirmationMac(sessionId, rootKey, chainKey, isResponse);
         // Constant-time comparison to prevent timing attacks
         if (expectedMac.length !== receivedMac.length)
             return false;
@@ -86,9 +86,9 @@ export class KemRatchet {
     // Symmetric ratchet for deriving message keys within a chain
     static symmetricRatchet(chain) {
         // Derive message key from current chain key
-        const messageKey = this.deriveKey(chain.chainKey, new Uint8Array([0x00]), this.CONTEXT_MESSAGE_KEY);
+        const messageKey = KemRatchet.deriveKey(chain.chainKey, new Uint8Array([0x00]), KemRatchet.CONTEXT_MESSAGE_KEY);
         // Derive new chain key
-        const newChainKey = this.deriveKey(chain.chainKey, new Uint8Array([0x01]), this.CONTEXT_CHAIN_KEY);
+        const newChainKey = KemRatchet.deriveKey(chain.chainKey, new Uint8Array([0x01]), KemRatchet.CONTEXT_CHAIN_KEY);
         const newChain = {
             chainKey: newChainKey,
             messageNumber: chain.messageNumber + 1,
@@ -108,7 +108,7 @@ export class KemRatchet {
         let currentChain = { ...chain };
         // Generate keys for skipped messages
         for (let i = 0; i < skipCount; i++) {
-            const { messageKey, newChain } = this.symmetricRatchet(currentChain);
+            const { messageKey, newChain } = KemRatchet.symmetricRatchet(currentChain);
             skippedKeys.set(currentChain.messageNumber, messageKey);
             currentChain = newChain;
         }

@@ -10,7 +10,9 @@ export class Logger {
         "chainKey",
         "ciphertext",
       ];
-      sensitiveKeys.forEach((key) => delete safeData[key]);
+      sensitiveKeys.forEach((key) => {
+        delete safeData[key];
+      });
     }
     console.log(`[Aegis:${component}] ${message}`, safeData || "");
   }

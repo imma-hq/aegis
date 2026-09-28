@@ -95,7 +95,7 @@ describe("E2EE", () => {
     });
 
     it("should fail to create session with invalid prekey signature", async () => {
-      const aliceIdentity = await alice.createIdentity();
+      const _aliceIdentity = await alice.createIdentity();
       const bobIdentity = await bob.createIdentity();
 
       // Modify the prekey signature to make it invalid
@@ -114,7 +114,7 @@ describe("E2EE", () => {
 
     it("should fail to create responder session with invalid prekey signature", async () => {
       const aliceIdentity = await alice.createIdentity();
-      const bobIdentity = await bob.createIdentity();
+      const _bobIdentity = await bob.createIdentity();
 
       // Modify the prekey signature to make it invalid
       const invalidBundle = {

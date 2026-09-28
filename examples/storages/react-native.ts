@@ -2,7 +2,7 @@
 import * as SQLite from "expo-sqlite";
 import type { StorageAdapter, Identity, Session } from "../../src/types"; // or @immahq/aegis/aegis.d.ts
 
-const DB_NAME = "aegis_e2ee.db";
+const _DB_NAME = "aegis_e2ee.db";
 const TABLE_NAME = "aegis_storage";
 
 // Singleton DB instance
@@ -58,7 +58,7 @@ function deepCloneSession(session: Session): Session {
  * Converts non-JSON-friendly types to serializable format.
  */
 function serialize(value: any): string {
-  return JSON.stringify(value, (key, val) => {
+  return JSON.stringify(value, (_key, val) => {
     if (val instanceof Uint8Array) {
       return { _type: "Uint8Array", data: Array.from(val) };
     }
@@ -76,7 +76,7 @@ function serialize(value: any): string {
  * Deserializes values from SQLite.
  */
 function deserialize(text: string): any {
-  return JSON.parse(text, (key, val) => {
+  return JSON.parse(text, (_key, val) => {
     if (val && typeof val === "object") {
       if (val._type === "Uint8Array") {
         return new Uint8Array(val.data);

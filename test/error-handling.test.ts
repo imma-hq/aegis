@@ -21,7 +21,7 @@ describe("Error Handling", () => {
   });
 
   it("should handle invalid public bundle validation", async () => {
-    const aliceIdentity = await alice.createIdentity();
+    const _aliceIdentity = await alice.createIdentity();
 
     // Create an invalid public bundle with wrong lengths
     const invalidBundle = {

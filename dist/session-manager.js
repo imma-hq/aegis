@@ -57,7 +57,7 @@ export class SessionManager {
             };
             await this.storage.saveSession(sessionId, session);
             Logger.log("Session", "Session created successfully as initiator", {
-                sessionId: sessionId.substring(0, 16) + "...",
+                sessionId: `${sessionId.substring(0, 16)}...`,
             });
             return { sessionId, ciphertext, confirmationMac };
         }
@@ -112,7 +112,7 @@ export class SessionManager {
             };
             await this.storage.saveSession(sessionId, session);
             Logger.log("Session", "Session created as responder", {
-                sessionId: sessionId.substring(0, 16) + "...",
+                sessionId: `${sessionId.substring(0, 16)}...`,
                 keyConfirmed: session.confirmed,
             });
             return { sessionId, confirmationMac, isValid };
@@ -168,8 +168,8 @@ export class SessionManager {
             if (session.lastUsed < cutoff) {
                 await this.storage.deleteSession(session.sessionId);
                 Logger.log("Cleanup", "Removed old session", {
-                    sessionId: session.sessionId.substring(0, 16) + "...",
-                    age: Math.round((Date.now() - session.lastUsed) / (1000 * 60 * 60 * 24)) + " days",
+                    sessionId: `${session.sessionId.substring(0, 16)}...`,
+                    age: `${Math.round((Date.now() - session.lastUsed) / (1000 * 60 * 60 * 24))} days`,
                 });
             }
         }
