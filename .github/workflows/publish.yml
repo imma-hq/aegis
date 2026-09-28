@@ -5,12 +5,14 @@ on:
     types: [created]
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
-  publish-gpr:
+  publish:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
       packages: write
     steps:
       - uses: actions/checkout@v4
@@ -22,17 +24,23 @@ jobs:
           node-version: "24.x"
           registry-url: "https://registry.npmjs.org"
 
-      # Configure npm to use the correct registry for scoped packages
-      - name: Configure npm for scoped package
-        run: |
-          npm config set @immahq:registry https://registry.npmjs.org/
-
       # Verify the version before publishing
       - name: Check package version
         run: |
           echo "Package version from package.json:"
           node -p "require('./package.json').version"
-          echo "Git tag: ${{ github.ref }}"
+          echo "Git ref: ${{ github.ref }}"
+
+      # Ensure pnpm authenticates to the npm registry. OIDC trusted publishing is
+      # preferred; when it is unavailable fall back to the NPM_TOKEN secret.
+      - name: Configure npm auth
+        run: |
+          npm config set @immahq:registry https://registry.npmjs.org/
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            echo "//registry.npmjs.org/:_authToken=$NODE_AUTH_TOKEN" >> .npmrc
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - run: pnpm install --frozen-lockfile
 
