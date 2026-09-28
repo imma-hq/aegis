@@ -949,4 +949,182 @@ describe("Group", () => {
       expect(aliceWrapped).not.toEqual(bobWrapped);
     });
   });
+
+  describe("Group Membership Changes", () => {
+    async function setupThreeMemberGroup() {
+      const aliceIdentity = (await alice.createIdentity()).identity;
+      const bobIdentity = (await bob.createIdentity()).identity;
+      const charlieIdentity = (await charlie.createIdentity()).identity;
+
+      const memberKemPublicKeys = new Map<string, Uint8Array>([
+        [aliceIdentity.userId, aliceIdentity.kemKeyPair.publicKey],
+        [bobIdentity.userId, bobIdentity.kemKeyPair.publicKey],
+        [charlieIdentity.userId, charlieIdentity.kemKeyPair.publicKey],
+      ]);
+      const memberDsaPublicKeys = new Map<string, Uint8Array>([
+        [aliceIdentity.userId, aliceIdentity.dsaKeyPair.publicKey],
+        [bobIdentity.userId, bobIdentity.dsaKeyPair.publicKey],
+        [charlieIdentity.userId, charlieIdentity.dsaKeyPair.publicKey],
+      ]);
+
+      const group = await alice.createGroup(
+        "Membership Group",
+        [aliceIdentity.userId, bobIdentity.userId, charlieIdentity.userId],
+        memberKemPublicKeys,
+        memberDsaPublicKeys,
+      );
+
+      return { group, aliceIdentity, bobIdentity, charlieIdentity };
+    }
+
+    it("should rotate the group key and lock out a removed member", async () => {
+      const { group, aliceIdentity, charlieIdentity } =
+        await setupThreeMemberGroup();
+      const originalSharedKey = group.sharedKey;
+
+      await alice.removeGroupMember(group.groupId, charlieIdentity.userId);
+
+      const updated = await alice.getGroup(group.groupId);
+      expect(updated).toBeDefined();
+      expect(updated?.members).not.toContain(charlieIdentity.userId);
+      expect(updated?.members).toHaveLength(2);
+      expect(updated?.memberKeys.has(charlieIdentity.userId)).toBe(false);
+      expect(updated?.memberDsaPublicKeys.has(charlieIdentity.userId)).toBe(
+        false,
+      );
+      expect(updated?.sharedKey).not.toEqual(originalSharedKey);
+
+      // Remaining member gets the rotated record and keeps working
+      await bob
+        .getStorage()
+        .saveSession(
+          group.groupId,
+          makeGroupSessionRecord(
+            updated!,
+            aliceIdentity.dsaKeyPair.publicKey,
+            updated!.sharedKey,
+          ),
+        );
+      // The removed member retains the OLD record and OLD key
+      await charlie
+        .getStorage()
+        .saveSession(
+          group.groupId,
+          makeGroupSessionRecord(
+            group,
+            aliceIdentity.dsaKeyPair.publicKey,
+            group.sharedKey,
+          ),
+        );
+
+      const message = await alice.encryptGroupMessage(
+        group.groupId,
+        "after removal",
+      );
+      expect(
+        new TextDecoder().decode(
+          await bob.decryptGroupMessage(group.groupId, message),
+        ),
+      ).toBe("after removal");
+
+      // Charlie still holds the old key but cannot read post-removal messages
+      await expect(
+        charlie.decryptGroupMessage(group.groupId, message),
+      ).rejects.toThrow();
+    });
+
+    it("should only allow the owner to remove members", async () => {
+      const { group, aliceIdentity, charlieIdentity } =
+        await setupThreeMemberGroup();
+
+      await bob
+        .getStorage()
+        .saveSession(
+          group.groupId,
+          makeGroupSessionRecord(
+            group,
+            aliceIdentity.dsaKeyPair.publicKey,
+            group.sharedKey,
+          ),
+        );
+
+      await expect(
+        bob.removeGroupMember(group.groupId, charlieIdentity.userId),
+      ).rejects.toThrow("Only group owner can remove members");
+    });
+
+    it("should reject removing a non-member", async () => {
+      const { group } = await setupThreeMemberGroup();
+      const outsider = (await new Aegis(new MemoryStorage()).createIdentity())
+        .identity;
+
+      await expect(
+        alice.removeGroupMember(group.groupId, outsider.userId),
+      ).rejects.toThrow("User is not a member of this group");
+    });
+
+    it("should not let a late joiner read pre-join history", async () => {
+      const aliceIdentity = (await alice.createIdentity()).identity;
+      const bobIdentity = (await bob.createIdentity()).identity;
+      const charlieIdentity = (await charlie.createIdentity()).identity;
+
+      const memberKemPublicKeys = new Map<string, Uint8Array>([
+        [aliceIdentity.userId, aliceIdentity.kemKeyPair.publicKey],
+        [bobIdentity.userId, bobIdentity.kemKeyPair.publicKey],
+      ]);
+      const memberDsaPublicKeys = new Map<string, Uint8Array>([
+        [aliceIdentity.userId, aliceIdentity.dsaKeyPair.publicKey],
+        [bobIdentity.userId, bobIdentity.dsaKeyPair.publicKey],
+      ]);
+
+      const group = await alice.createGroup(
+        "Late Join Group",
+        [aliceIdentity.userId, bobIdentity.userId],
+        memberKemPublicKeys,
+        memberDsaPublicKeys,
+      );
+
+      const historyMessage = await alice.encryptGroupMessage(
+        group.groupId,
+        "before charlie joined",
+      );
+
+      // Charlie joins afterwards, which rotates the group key
+      await alice.addGroupMember(
+        group.groupId,
+        charlieIdentity.userId,
+        {} as any,
+        charlieIdentity.kemKeyPair.publicKey,
+      );
+
+      const joined = await alice.getGroup(group.groupId);
+      expect(joined).toBeDefined();
+      await charlie
+        .getStorage()
+        .saveSession(
+          group.groupId,
+          makeGroupSessionRecord(
+            joined!,
+            aliceIdentity.dsaKeyPair.publicKey,
+            joined!.sharedKey,
+          ),
+        );
+
+      // Charlie cannot read messages sent before the join...
+      await expect(
+        charlie.decryptGroupMessage(group.groupId, historyMessage),
+      ).rejects.toThrow();
+
+      // ...but can read messages sent after joining
+      const afterJoin = await alice.encryptGroupMessage(
+        group.groupId,
+        "after charlie joined",
+      );
+      expect(
+        new TextDecoder().decode(
+          await charlie.decryptGroupMessage(group.groupId, afterJoin),
+        ),
+      ).toBe("after charlie joined");
+    });
+  });
 });

@@ -98,7 +98,7 @@ describe("Error Handling", () => {
     );
     const staleHeader = {
       ...validMessage.header,
-      timestamp: Date.now() - 10 * 60 * 1000, // 10 minutes old
+      timestamp: Date.now() - 8 * 24 * 60 * 60 * 1000, // 8 days old
     };
     const staleMessage = {
       ...validMessage,
@@ -112,6 +112,129 @@ describe("Error Handling", () => {
     await expect(
       bob.decryptMessage(bobSession.sessionId, staleMessage),
     ).rejects.toThrow(ERRORS.MESSAGE_TOO_OLD_TIMESTAMP);
+  });
+
+  it("should accept a delayed (offline) message well past 5 minutes", async () => {
+    const aliceIdentity = await alice.createIdentity();
+    const bobIdentity = await bob.createIdentity();
+
+    const aliceSession = await alice.createSession(bobIdentity.publicBundle);
+    const bobSession = await bob.createResponderSession(
+      aliceIdentity.publicBundle,
+      aliceSession.ciphertext,
+      aliceSession.confirmationMac,
+    );
+
+    await alice.confirmSession(
+      aliceSession.sessionId,
+      bobSession.confirmationMac,
+    );
+
+    const normalMessage = await alice.encryptMessage(
+      aliceSession.sessionId,
+      "normal",
+    );
+    await bob.decryptMessage(bobSession.sessionId, normalMessage);
+
+    // Encrypt, then simulate the message waiting ~1 hour on a server while the
+    // recipient was offline. Re-sign so the signature matches the aged header.
+    const delayed = await alice.encryptMessage(
+      aliceSession.sessionId,
+      "sent while offline",
+    );
+    const agedHeader = {
+      ...delayed.header,
+      timestamp: Date.now() - 60 * 60 * 1000, // 1 hour old
+    };
+    const agedMessage = {
+      ...delayed,
+      header: agedHeader,
+      signature: ml_dsa65.sign(
+        concatBytes(serializeHeader(agedHeader), delayed.ciphertext),
+        aliceIdentity.identity.dsaKeyPair.secretKey,
+      ),
+    };
+
+    const decrypted = await bob.decryptMessage(
+      bobSession.sessionId,
+      agedMessage,
+    );
+    expect(new TextDecoder().decode(decrypted.plaintext)).toBe(
+      "sent while offline",
+    );
+  });
+
+  it("should reject a message whose timestamp is far in the future", async () => {
+    const aliceIdentity = await alice.createIdentity();
+    const bobIdentity = await bob.createIdentity();
+
+    const aliceSession = await alice.createSession(bobIdentity.publicBundle);
+    const bobSession = await bob.createResponderSession(
+      aliceIdentity.publicBundle,
+      aliceSession.ciphertext,
+      aliceSession.confirmationMac,
+    );
+
+    await alice.confirmSession(
+      aliceSession.sessionId,
+      bobSession.confirmationMac,
+    );
+
+    const valid = await alice.encryptMessage(aliceSession.sessionId, "future");
+    const futureHeader = {
+      ...valid.header,
+      timestamp: Date.now() + 3 * 24 * 60 * 60 * 1000, // 3 days ahead
+    };
+    const futureMessage = {
+      ...valid,
+      header: futureHeader,
+      signature: ml_dsa65.sign(
+        concatBytes(serializeHeader(futureHeader), valid.ciphertext),
+        aliceIdentity.identity.dsaKeyPair.secretKey,
+      ),
+    };
+
+    await expect(
+      bob.decryptMessage(bobSession.sessionId, futureMessage),
+    ).rejects.toThrow(ERRORS.MESSAGE_FROM_FUTURE);
+  });
+
+  it("should keep decrypting valid messages after a tampered one is rejected", async () => {
+    const aliceIdentity = await alice.createIdentity();
+    const bobIdentity = await bob.createIdentity();
+
+    const aliceSession = await alice.createSession(bobIdentity.publicBundle);
+    const bobSession = await bob.createResponderSession(
+      aliceIdentity.publicBundle,
+      aliceSession.ciphertext,
+      aliceSession.confirmationMac,
+    );
+
+    await alice.confirmSession(
+      aliceSession.sessionId,
+      bobSession.confirmationMac,
+    );
+
+    const good1 = await alice.encryptMessage(aliceSession.sessionId, "good-1");
+    await bob.decryptMessage(bobSession.sessionId, good1);
+
+    // A tampered message is rejected and must not corrupt session state
+    const tampered = await alice.encryptMessage(
+      aliceSession.sessionId,
+      "tampered",
+    );
+    const bad = {
+      ...tampered,
+      signature: new Uint8Array(tampered.signature.length),
+    };
+    await expect(bob.decryptMessage(bobSession.sessionId, bad)).rejects.toThrow(
+      ERRORS.INVALID_MESSAGE_SIGNATURE,
+    );
+
+    // The next valid message still decrypts
+    const good2 = await alice.encryptMessage(aliceSession.sessionId, "good-2");
+    const decrypted = await bob.decryptMessage(bobSession.sessionId, good2);
+    expect(new TextDecoder().decode(decrypted.plaintext)).toBe("good-2");
   });
 
   it("should reject a ratchet message with no KEM ciphertext", async () => {
